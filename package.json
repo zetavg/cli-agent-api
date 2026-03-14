@@ -13,8 +13,12 @@
   "bugs": {
     "url": "https://github.com/zetavg/cli-agent-api/issues"
   },
+  "bin": {
+    "cli-agent-api": "./dist/cli.mjs"
+  },
   "exports": {
     ".": "./dist/index.mjs",
+    "./cli": "./dist/cli.mjs",
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.mts",
