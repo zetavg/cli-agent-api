@@ -59,6 +59,39 @@ describe('Claude adapter helpers', () => {
         },
       },
     });
+    expect(
+      parseClaudeLine(
+        '{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_test","name":"WebSearch"}}}',
+      ),
+    ).toEqual({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 1,
+        content_block: {
+          type: 'tool_use',
+          id: 'toolu_test',
+          name: 'WebSearch',
+        },
+      },
+    });
+    expect(
+      parseClaudeLine(
+        '{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_test","type":"tool_result","content":"search results here"}]}}',
+      ),
+    ).toEqual({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            tool_use_id: 'toolu_test',
+            type: 'tool_result',
+            content: 'search results here',
+          },
+        ],
+      },
+    });
     expect(parseClaudeLine('not-json')).toBeNull();
   });
 

@@ -95,6 +95,14 @@ export async function collectChatCompletion(
       continue;
     }
 
+    if (event.type === 'response.output_tool_call.delta') {
+      continue;
+    }
+
+    if (event.type === 'response.output_tool_result.delta') {
+      continue;
+    }
+
     finishReason = event.finishReason;
     usage = event.usage;
   }
@@ -132,6 +140,47 @@ export async function* serializeChatCompletionStream(
       yield toSseData(
         createChatCompletionStreamChunk(providerRun.metadata, {
           content: event.text,
+        }),
+      );
+      continue;
+    }
+
+    if (event.type === 'response.output_tool_call.delta') {
+      yield toSseData(
+        createChatCompletionStreamChunk(providerRun.metadata, {
+          tool_calls: [
+            {
+              index: event.toolCallIndex,
+              id: event.toolCallId,
+              type:
+                event.toolCallId !== undefined || event.toolName !== undefined
+                  ? 'function'
+                  : undefined,
+              function:
+                event.toolName !== undefined ||
+                event.toolArguments !== undefined
+                  ? {
+                      name: event.toolName,
+                      arguments: event.toolArguments,
+                    }
+                  : undefined,
+            },
+          ],
+        }),
+      );
+      continue;
+    }
+
+    if (event.type === 'response.output_tool_result.delta') {
+      yield toSseData(
+        createChatCompletionStreamChunk(providerRun.metadata, {
+          tool_calls: [
+            {
+              index: event.toolCallIndex,
+              id: event.toolCallId,
+              result: event.toolOutput,
+            },
+          ],
         }),
       );
       continue;

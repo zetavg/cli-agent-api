@@ -30,6 +30,24 @@ class StubProvider implements AgentProvider {
           model: 'claude-sonnet-4-6',
         };
         yield {
+          type: 'response.output_tool_call.delta' as const,
+          toolCallIndex: 0,
+          toolCallId: 'toolu_test',
+          toolName: 'WebSearch',
+          toolArguments: '',
+        };
+        yield {
+          type: 'response.output_tool_call.delta' as const,
+          toolCallIndex: 0,
+          toolArguments: '{"query":"Hello there!"}',
+        };
+        yield {
+          type: 'response.output_tool_result.delta' as const,
+          toolCallIndex: 0,
+          toolCallId: 'toolu_test',
+          toolOutput: 'search results here',
+        };
+        yield {
           type: 'response.output_text.delta' as const,
           text: `echo:${input.prompt}`,
         };
@@ -128,6 +146,15 @@ describe('chat completions flow', () => {
     const text = chunks.join('');
     expect(text).toContain('"model":"claude-sonnet-4-6"');
     expect(text).toContain('"role":"assistant"');
+    expect(text).toContain(
+      '"tool_calls":[{"index":0,"id":"toolu_test","type":"function","function":{"name":"WebSearch","arguments":""}}]',
+    );
+    expect(text).toContain(
+      '"tool_calls":[{"index":0,"function":{"arguments":"{\\"query\\":\\"Hello there!\\"}"}}]',
+    );
+    expect(text).toContain(
+      '"tool_calls":[{"index":0,"id":"toolu_test","result":"search results here"}]',
+    );
     expect(text).toContain('"content":"echo:Hello there!"');
     expect(text).toContain('"finish_reason":"stop"');
     expect(text).toContain('"choices":[]');

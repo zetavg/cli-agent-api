@@ -43,13 +43,32 @@ interface ClaudeCliSystemLine {
   model?: string;
 }
 
+interface ClaudeCliUserLine {
+  type: 'user';
+  message?: {
+    role?: string;
+    content?: Array<{
+      type?: string;
+      tool_use_id?: string;
+      content?: string;
+    }>;
+  };
+}
+
 interface ClaudeCliStreamLine {
   type: 'stream_event';
   event?: {
     type?: string;
+    index?: number;
+    content_block?: {
+      type?: string;
+      id?: string;
+      name?: string;
+    };
     delta?: {
       type?: string;
       text?: string;
+      partial_json?: string;
     };
   };
 }
@@ -97,6 +116,9 @@ export async function* streamClaudeChatCompletion(
   let usage: ChatCompletionUsage | undefined;
   let finishReason: 'stop' | 'length' = 'stop';
   const usageExtras: Record<string, unknown> = {};
+  const toolCallIndexes = new Map<number, number>();
+  const toolCallIds = new Map<string, number>();
+  let nextToolCallIndex = 0;
 
   void consumeStderr(subprocess.stderr, stderrChunks);
 
@@ -126,6 +148,19 @@ export async function* streamClaudeChatCompletion(
         continue;
       }
 
+      if (parsed.type === 'user') {
+        const toolResultDelta = extractClaudeToolResultDelta(
+          parsed,
+          toolCallIds,
+        );
+
+        if (toolResultDelta) {
+          yield toolResultDelta;
+        }
+
+        continue;
+      }
+
       if (parsed.type === 'rate_limit_event') {
         if (parsed.rate_limit_info !== undefined) {
           usageExtras.rate_limit_info = parsed.rate_limit_info;
@@ -135,6 +170,18 @@ export async function* streamClaudeChatCompletion(
       }
 
       if (parsed.type === 'stream_event') {
+        const toolCallDelta = extractClaudeToolCallDelta(
+          parsed,
+          toolCallIndexes,
+          toolCallIds,
+          () => nextToolCallIndex++,
+        );
+
+        if (toolCallDelta) {
+          yield toolCallDelta;
+          continue;
+        }
+
         const deltaText = extractClaudeTextDelta(parsed);
 
         if (deltaText.length > 0) {
@@ -233,6 +280,7 @@ export function parseClaudeLine(
   | ClaudeCliResultLine
   | ClaudeCliRateLimitLine
   | ClaudeCliSystemLine
+  | ClaudeCliUserLine
   | ClaudeCliStreamLine
   | null {
   const trimmed = line.trim();
@@ -246,6 +294,7 @@ export function parseClaudeLine(
       | ClaudeCliResultLine
       | ClaudeCliRateLimitLine
       | ClaudeCliSystemLine
+      | ClaudeCliUserLine
       | ClaudeCliStreamLine;
   } catch {
     return null;
@@ -264,6 +313,91 @@ function extractClaudeTextDelta(line: ClaudeCliStreamLine): string {
   }
 
   return '';
+}
+
+function extractClaudeToolCallDelta(
+  line: ClaudeCliStreamLine,
+  toolCallIndexes: Map<number, number>,
+  toolCallIds: Map<string, number>,
+  createToolCallIndex: () => number,
+): ProviderChatCompletionEvent | null {
+  const event = line.event;
+
+  if (
+    event?.type === 'content_block_start' &&
+    typeof event.index === 'number' &&
+    event.content_block?.type === 'tool_use' &&
+    typeof event.content_block.id === 'string' &&
+    typeof event.content_block.name === 'string'
+  ) {
+    const toolCallIndex = createToolCallIndex();
+
+    toolCallIndexes.set(event.index, toolCallIndex);
+    toolCallIds.set(event.content_block.id, toolCallIndex);
+
+    return {
+      type: 'response.output_tool_call.delta',
+      toolCallIndex,
+      toolCallId: event.content_block.id,
+      toolName: event.content_block.name,
+      toolArguments: '',
+    };
+  }
+
+  if (
+    event?.type === 'content_block_delta' &&
+    typeof event.index === 'number' &&
+    event.delta?.type === 'input_json_delta' &&
+    typeof event.delta.partial_json === 'string'
+  ) {
+    const toolCallIndex = toolCallIndexes.get(event.index);
+
+    if (toolCallIndex === undefined) {
+      return null;
+    }
+
+    return {
+      type: 'response.output_tool_call.delta',
+      toolCallIndex,
+      toolArguments: event.delta.partial_json,
+    };
+  }
+
+  return null;
+}
+
+function extractClaudeToolResultDelta(
+  line: ClaudeCliUserLine,
+  toolCallIds: Map<string, number>,
+): ProviderChatCompletionEvent | null {
+  const content = line.message?.content;
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  for (const part of content) {
+    if (
+      part.type === 'tool_result' &&
+      typeof part.tool_use_id === 'string' &&
+      typeof part.content === 'string'
+    ) {
+      const toolCallIndex = toolCallIds.get(part.tool_use_id);
+
+      if (toolCallIndex === undefined) {
+        return null;
+      }
+
+      return {
+        type: 'response.output_tool_result.delta',
+        toolCallIndex,
+        toolCallId: part.tool_use_id,
+        toolOutput: part.content,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function normalizeClaudeUsage(

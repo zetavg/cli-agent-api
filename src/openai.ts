@@ -52,6 +52,21 @@ export interface ProviderTextDeltaEvent {
   text: string;
 }
 
+export interface ProviderToolCallDeltaEvent {
+  type: 'response.output_tool_call.delta';
+  toolCallIndex: number;
+  toolCallId?: string;
+  toolName?: string;
+  toolArguments?: string;
+}
+
+export interface ProviderToolResultDeltaEvent {
+  type: 'response.output_tool_result.delta';
+  toolCallIndex: number;
+  toolCallId: string;
+  toolOutput: string;
+}
+
 export interface ProviderMetadataEvent {
   type: 'response.metadata';
   model: string;
@@ -66,6 +81,8 @@ export interface ProviderCompletedEvent {
 export type ProviderChatCompletionEvent =
   | ProviderMetadataEvent
   | ProviderTextDeltaEvent
+  | ProviderToolCallDeltaEvent
+  | ProviderToolResultDeltaEvent
   | ProviderCompletedEvent;
 
 export function createCompletionMetadata(
@@ -105,7 +122,20 @@ export function createChatCompletionResponse(
 
 export function createChatCompletionStreamChunk(
   metadata: ProviderCompletionMetadata,
-  delta: { role?: 'assistant'; content?: string },
+  delta: {
+    role?: 'assistant';
+    content?: string;
+    tool_calls?: Array<{
+      index: number;
+      id?: string;
+      type?: 'function';
+      result?: string;
+      function?: {
+        name?: string;
+        arguments?: string;
+      };
+    }>;
+  },
   finishReason: 'stop' | 'length' | null = null,
 ) {
   return {
