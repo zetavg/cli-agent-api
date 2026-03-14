@@ -196,16 +196,14 @@ describe('Claude adapter helpers', () => {
         role: 'user',
         content: 'Hello',
       },
-      cwd: '/tmp/demo/agent-workspace',
       sessionId: 'session-123',
-      version: 'test-version',
+      userType: 'external',
+      __restored: true,
     });
     expect(lines[2]).toMatchObject({
       parentUuid: lines[1].uuid,
       type: 'assistant',
       message: {
-        model: 'sonnet',
-        type: 'message',
         role: 'assistant',
         content: [
           {
@@ -213,12 +211,10 @@ describe('Claude adapter helpers', () => {
             text: 'Hi there',
           },
         ],
-        stop_reason: 'end_turn',
-        stop_sequence: null,
       },
-      cwd: '/tmp/demo/agent-workspace',
       sessionId: 'session-123',
-      version: 'test-version',
+      userType: 'external',
+      __restored: true,
     });
     expect(lines[3]).toEqual({
       type: 'last-prompt',
