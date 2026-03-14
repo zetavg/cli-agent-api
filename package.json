@@ -22,10 +22,11 @@
     "dist"
   ],
   "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest",
-    "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
