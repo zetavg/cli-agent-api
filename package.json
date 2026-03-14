@@ -38,5 +38,10 @@
     "tsdown": "^0.21.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "execa": "^9.6.1",
+    "express": "^5.2.1"
   }
 }
