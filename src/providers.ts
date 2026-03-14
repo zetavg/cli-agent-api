@@ -6,6 +6,7 @@ import type {
 export interface ProviderChatCompletionInput {
   model?: string;
   prompt: string;
+  systemPrompt?: string;
 }
 
 export interface ProviderChatCompletionRun {

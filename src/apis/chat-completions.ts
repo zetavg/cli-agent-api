@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import {
   type ChatCompletionMessage,
   extractLatestUserPrompt,
+  extractSystemPrompt,
 } from '../messages.js';
 import {
   type ChatCompletionReasoningDetail,
@@ -57,10 +58,12 @@ export async function prepareChatCompletion(
 ) {
   const messages = normalizeMessages(body.messages);
   const prompt = extractLatestUserPrompt(messages);
+  const systemPrompt = extractSystemPrompt(messages);
   const run = provider.createChatCompletion(
     {
       model: typeof body.model === 'string' ? body.model : undefined,
       prompt,
+      systemPrompt,
     },
     signal,
   );

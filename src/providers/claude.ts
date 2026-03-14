@@ -276,6 +276,10 @@ export function buildClaudeArgs(input: ProviderChatCompletionInput): string[] {
     args.push('--model', input.model);
   }
 
+  if (input.systemPrompt) {
+    args.push('--system-prompt', input.systemPrompt);
+  }
+
   args.push(input.prompt);
 
   return args;

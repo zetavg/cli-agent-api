@@ -153,6 +153,48 @@ describe('chat completions flow', () => {
     });
   });
 
+  test('passes system and developer messages as a system prompt', async () => {
+    let capturedInput: ProviderChatCompletionInput | undefined;
+
+    class CapturingProvider extends StubProvider {
+      override createChatCompletion(
+        input: ProviderChatCompletionInput,
+        signal: AbortSignal,
+      ): ProviderChatCompletionRun {
+        capturedInput = input;
+        return super.createChatCompletion(input, signal);
+      }
+    }
+
+    await prepareChatCompletion(
+      new CapturingProvider(),
+      {
+        model: 'sonnet',
+        messages: [
+          {
+            role: 'system',
+            content: [{ type: 'text', text: 'System message.' }],
+          },
+          {
+            role: 'developer',
+            content: [{ type: 'text', text: 'Developer message.' }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Hello there!' }],
+          },
+        ],
+      },
+      new AbortController().signal,
+    );
+
+    expect(capturedInput).toEqual({
+      model: 'sonnet',
+      prompt: 'Hello there!',
+      systemPrompt: 'System message.\nDeveloper message.',
+    });
+  });
+
   test('streams server-sent events', async () => {
     const result = await prepareChatCompletion(
       new StubProvider(),

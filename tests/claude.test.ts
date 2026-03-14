@@ -18,6 +18,7 @@ describe('Claude adapter helpers', () => {
       buildClaudeArgs({
         model: 'sonnet',
         prompt: 'Hello there!',
+        systemPrompt: 'You are an AI agent.',
       }),
     ).toEqual([
       '-p',
@@ -31,6 +32,8 @@ describe('Claude adapter helpers', () => {
       DEFAULT_CLAUDE_TOOLS.join(' '),
       '--model',
       'sonnet',
+      '--system-prompt',
+      'You are an AI agent.',
       'Hello there!',
     ]);
   });

@@ -8,6 +8,20 @@ export interface ChatCompletionContentPart {
   text?: string;
 }
 
+export function extractSystemPrompt(
+  messages: ChatCompletionMessage[],
+): string | undefined {
+  const prompt = messages
+    .filter(
+      (message) => message.role === 'system' || message.role === 'developer',
+    )
+    .map((message) => normalizeMessageContent(message.content).trim())
+    .filter((content) => content.length > 0)
+    .join('\n');
+
+  return prompt.length > 0 ? prompt : undefined;
+}
+
 export function extractLatestUserPrompt(
   messages: ChatCompletionMessage[],
 ): string {
