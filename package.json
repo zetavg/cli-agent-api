@@ -31,6 +31,10 @@
   "devDependencies": {
     "@types/node": "^25.3.5",
     "@typescript/native-preview": "7.0.0-dev.20260309.1",
+    "@zetavg/eslint-config": "^0.0.7",
+    "@zetavg/prettier-config": "^0.0.7",
+    "eslint": "^10.0.3",
+    "prettier": "^3.8.1",
     "tsdown": "^0.21.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
