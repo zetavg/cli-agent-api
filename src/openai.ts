@@ -23,6 +23,15 @@ export interface ChatCompletionUsage {
   [key: string]: unknown;
 }
 
+export interface ChatCompletionReasoningDetail {
+  type: 'reasoning.text';
+  text?: string;
+  signature?: string | null;
+  id: string | null;
+  format: string;
+  index: number;
+}
+
 export function createEmptyUsage(): ChatCompletionUsage {
   return {
     prompt_tokens: 0,
@@ -67,6 +76,15 @@ export interface ProviderToolResultDeltaEvent {
   toolOutput: string;
 }
 
+export interface ProviderReasoningDeltaEvent {
+  type: 'response.output_reasoning.delta';
+  reasoningId: string;
+  reasoningIndex: number;
+  reasoningText?: string;
+  signature?: string | null;
+  format: string;
+}
+
 export interface ProviderMetadataEvent {
   type: 'response.metadata';
   model: string;
@@ -83,6 +101,7 @@ export type ProviderChatCompletionEvent =
   | ProviderTextDeltaEvent
   | ProviderToolCallDeltaEvent
   | ProviderToolResultDeltaEvent
+  | ProviderReasoningDeltaEvent
   | ProviderCompletedEvent;
 
 export function createCompletionMetadata(
@@ -100,6 +119,8 @@ export function createChatCompletionResponse(
   content: string,
   finishReason: 'stop' | 'length',
   usage?: ChatCompletionUsage,
+  reasoningText?: string,
+  reasoningDetails?: ChatCompletionReasoningDetail[],
 ) {
   return {
     id: metadata.id,
@@ -112,6 +133,9 @@ export function createChatCompletionResponse(
         message: {
           role: 'assistant' as const,
           content,
+          reasoning: reasoningText,
+          reasoning_content: reasoningText,
+          reasoning_details: reasoningDetails,
         },
         finish_reason: finishReason,
       },
@@ -135,6 +159,9 @@ export function createChatCompletionStreamChunk(
         arguments?: string;
       };
     }>;
+    reasoning?: string;
+    reasoning_content?: string;
+    reasoning_details?: ChatCompletionReasoningDetail[];
   },
   finishReason: 'stop' | 'length' | null = null,
 ) {

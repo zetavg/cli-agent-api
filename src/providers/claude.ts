@@ -64,11 +64,15 @@ interface ClaudeCliStreamLine {
       type?: string;
       id?: string;
       name?: string;
+      thinking?: string;
+      signature?: string;
     };
     delta?: {
       type?: string;
       text?: string;
       partial_json?: string;
+      thinking?: string;
+      signature?: string;
     };
   };
 }
@@ -118,6 +122,8 @@ export async function* streamClaudeChatCompletion(
   const usageExtras: Record<string, unknown> = {};
   const toolCallIndexes = new Map<number, number>();
   const toolCallIds = new Map<string, number>();
+  const reasoningIndexes = new Map<number, number>();
+  let nextReasoningIndex = 0;
   let nextToolCallIndex = 0;
 
   void consumeStderr(subprocess.stderr, stderrChunks);
@@ -170,6 +176,17 @@ export async function* streamClaudeChatCompletion(
       }
 
       if (parsed.type === 'stream_event') {
+        const reasoningDelta = extractClaudeReasoningDelta(
+          parsed,
+          reasoningIndexes,
+          () => nextReasoningIndex++,
+        );
+
+        if (reasoningDelta) {
+          yield reasoningDelta;
+          continue;
+        }
+
         const toolCallDelta = extractClaudeToolCallDelta(
           parsed,
           toolCallIndexes,
@@ -315,6 +332,67 @@ function extractClaudeTextDelta(line: ClaudeCliStreamLine): string {
   return '';
 }
 
+function extractClaudeReasoningDelta(
+  line: ClaudeCliStreamLine,
+  reasoningIndexes: Map<number, number>,
+  createReasoningIndex: () => number,
+): ProviderChatCompletionEvent | null {
+  const event = line.event;
+
+  if (
+    event?.type === 'content_block_start' &&
+    typeof event.index === 'number' &&
+    event.content_block?.type === 'thinking'
+  ) {
+    reasoningIndexes.set(event.index, createReasoningIndex());
+    return null;
+  }
+
+  if (
+    event?.type === 'content_block_delta' &&
+    typeof event.index === 'number' &&
+    event.delta?.type === 'thinking_delta' &&
+    typeof event.delta.thinking === 'string'
+  ) {
+    const reasoningIndex = getReasoningIndex(
+      reasoningIndexes,
+      event.index,
+      createReasoningIndex,
+    );
+
+    return {
+      type: 'response.output_reasoning.delta',
+      reasoningId: createReasoningId(reasoningIndex),
+      reasoningIndex,
+      reasoningText: event.delta.thinking,
+      format: 'anthropic-claude-v1',
+    };
+  }
+
+  if (
+    event?.type === 'content_block_delta' &&
+    typeof event.index === 'number' &&
+    event.delta?.type === 'signature_delta' &&
+    typeof event.delta.signature === 'string'
+  ) {
+    const reasoningIndex = getReasoningIndex(
+      reasoningIndexes,
+      event.index,
+      createReasoningIndex,
+    );
+
+    return {
+      type: 'response.output_reasoning.delta',
+      reasoningId: createReasoningId(reasoningIndex),
+      reasoningIndex,
+      signature: event.delta.signature,
+      format: 'anthropic-claude-v1',
+    };
+  }
+
+  return null;
+}
+
 function extractClaudeToolCallDelta(
   line: ClaudeCliStreamLine,
   toolCallIndexes: Map<number, number>,
@@ -398,6 +476,28 @@ function extractClaudeToolResultDelta(
   }
 
   return null;
+}
+
+function getReasoningIndex(
+  reasoningIndexes: Map<number, number>,
+  streamIndex: number,
+  createReasoningIndex: () => number,
+): number {
+  const current = reasoningIndexes.get(streamIndex);
+
+  if (current !== undefined) {
+    return current;
+  }
+
+  const next = createReasoningIndex();
+
+  reasoningIndexes.set(streamIndex, next);
+
+  return next;
+}
+
+function createReasoningId(reasoningIndex: number): string {
+  return `reasoning-${reasoningIndex}`;
 }
 
 export function normalizeClaudeUsage(

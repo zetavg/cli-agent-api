@@ -30,6 +30,21 @@ class StubProvider implements AgentProvider {
           model: 'claude-sonnet-4-6',
         };
         yield {
+          type: 'response.output_reasoning.delta' as const,
+          reasoningId: 'reasoning-0',
+          reasoningIndex: 0,
+          reasoningText: 'Thinking... ',
+          format: 'anthropic-claude-v1',
+        };
+        yield {
+          type: 'response.output_reasoning.delta' as const,
+          reasoningId: 'reasoning-0',
+          reasoningIndex: 0,
+          reasoningText: 'about search.',
+          signature: 'sig_123',
+          format: 'anthropic-claude-v1',
+        };
+        yield {
           type: 'response.output_tool_call.delta' as const,
           toolCallIndex: 0,
           toolCallId: 'toolu_test',
@@ -104,6 +119,22 @@ describe('chat completions flow', () => {
 
     expect(result.body.choices[0].message.content).toBe('echo:Hello there!');
     expect(result.body.model).toBe('claude-sonnet-4-6');
+    expect(result.body.choices[0].message.reasoning).toBe(
+      'Thinking... about search.',
+    );
+    expect(result.body.choices[0].message.reasoning_content).toBe(
+      'Thinking... about search.',
+    );
+    expect(result.body.choices[0].message.reasoning_details).toEqual([
+      {
+        type: 'reasoning.text',
+        id: 'reasoning-0',
+        format: 'anthropic-claude-v1',
+        index: 0,
+        text: 'Thinking... about search.',
+        signature: 'sig_123',
+      },
+    ]);
     expect(result.body.usage).toEqual({
       prompt_tokens: 2,
       completion_tokens: 3,
@@ -146,6 +177,11 @@ describe('chat completions flow', () => {
     const text = chunks.join('');
     expect(text).toContain('"model":"claude-sonnet-4-6"');
     expect(text).toContain('"role":"assistant"');
+    expect(text).toContain('"reasoning":"Thinking... "');
+    expect(text).toContain('"reasoning_content":"Thinking... "');
+    expect(text).toContain(
+      '"reasoning_details":[{"type":"reasoning.text","id":"reasoning-0","format":"anthropic-claude-v1","index":0,"text":"Thinking... ","signature":null}]',
+    );
     expect(text).toContain(
       '"tool_calls":[{"index":0,"id":"toolu_test","type":"function","function":{"name":"WebSearch","arguments":""}}]',
     );

@@ -92,6 +92,36 @@ describe('Claude adapter helpers', () => {
         ],
       },
     });
+    expect(
+      parseClaudeLine(
+        '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Thinking... "}}}',
+      ),
+    ).toEqual({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: {
+          type: 'thinking_delta',
+          thinking: 'Thinking... ',
+        },
+      },
+    });
+    expect(
+      parseClaudeLine(
+        '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_123"}}}',
+      ),
+    ).toEqual({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: {
+          type: 'signature_delta',
+          signature: 'sig_123',
+        },
+      },
+    });
     expect(parseClaudeLine('not-json')).toBeNull();
   });
 

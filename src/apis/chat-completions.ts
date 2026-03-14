@@ -5,6 +5,7 @@ import {
   extractLatestUserPrompt,
 } from '../messages.js';
 import {
+  type ChatCompletionReasoningDetail,
   type ChatCompletionsRequestBody,
   createChatCompletionResponse,
   createChatCompletionStreamChunk,
@@ -83,6 +84,8 @@ export async function collectChatCompletion(
   let content = '';
   let finishReason: 'stop' | 'length' = 'stop';
   let usage;
+  let reasoningText = '';
+  const reasoningDetails = new Map<string, ChatCompletionReasoningDetail>();
 
   for await (const event of providerRun.events) {
     if (event.type === 'response.metadata') {
@@ -103,6 +106,24 @@ export async function collectChatCompletion(
       continue;
     }
 
+    if (event.type === 'response.output_reasoning.delta') {
+      if (event.reasoningText) {
+        reasoningText += event.reasoningText;
+      }
+
+      const existing = reasoningDetails.get(event.reasoningId);
+
+      reasoningDetails.set(event.reasoningId, {
+        type: 'reasoning.text',
+        id: event.reasoningId,
+        format: event.format,
+        index: event.reasoningIndex,
+        text: `${existing?.text ?? ''}${event.reasoningText ?? ''}`,
+        signature: event.signature ?? existing?.signature ?? null,
+      });
+      continue;
+    }
+
     finishReason = event.finishReason;
     usage = event.usage;
   }
@@ -112,6 +133,10 @@ export async function collectChatCompletion(
     content,
     finishReason,
     usage,
+    reasoningText.length > 0 ? reasoningText : undefined,
+    reasoningDetails.size > 0
+      ? [...reasoningDetails.values()].sort((a, b) => a.index - b.index)
+      : undefined,
   );
 }
 
@@ -179,6 +204,26 @@ export async function* serializeChatCompletionStream(
               index: event.toolCallIndex,
               id: event.toolCallId,
               result: event.toolOutput,
+            },
+          ],
+        }),
+      );
+      continue;
+    }
+
+    if (event.type === 'response.output_reasoning.delta') {
+      yield toSseData(
+        createChatCompletionStreamChunk(providerRun.metadata, {
+          reasoning: event.reasoningText,
+          reasoning_content: event.reasoningText,
+          reasoning_details: [
+            {
+              type: 'reasoning.text',
+              id: event.reasoningId,
+              format: event.format,
+              index: event.reasoningIndex,
+              text: event.reasoningText,
+              signature: event.signature ?? null,
             },
           ],
         }),
