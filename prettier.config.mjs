@@ -1,4 +1,4 @@
-import defaultConfig from "@zetavg/prettier-config";
+import defaultConfig from '@zetavg/prettier-config';
 
 /**
  * @type {import("prettier").Config}
