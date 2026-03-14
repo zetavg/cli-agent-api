@@ -9,6 +9,7 @@ export type {
 export {
   buildClaudeArgs,
   ClaudeProvider,
+  normalizeClaudeUsage,
   parseClaudeLine,
   resolveClaudeWorkingDirectory,
 } from './providers/claude.js';

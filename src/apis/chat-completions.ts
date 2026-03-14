@@ -8,6 +8,7 @@ import {
   type ChatCompletionsRequestBody,
   createChatCompletionResponse,
   createChatCompletionStreamChunk,
+  createChatCompletionUsageStreamChunk,
   toSseData,
 } from '../openai.js';
 import type { AgentProvider } from '../providers.js';
@@ -110,6 +111,7 @@ export async function* serializeChatCompletionStream(
   providerRun: ReturnType<AgentProvider['createChatCompletion']>,
 ) {
   let sentRoleChunk = false;
+  let usage;
 
   for await (const event of providerRun.events) {
     if (event.type === 'response.metadata') {
@@ -135,6 +137,8 @@ export async function* serializeChatCompletionStream(
       continue;
     }
 
+    usage = event.usage;
+
     yield toSseData(
       createChatCompletionStreamChunk(
         providerRun.metadata,
@@ -152,6 +156,9 @@ export async function* serializeChatCompletionStream(
     );
   }
 
+  yield toSseData(
+    createChatCompletionUsageStreamChunk(providerRun.metadata, usage),
+  );
   yield 'data: [DONE]\n\n';
 }
 

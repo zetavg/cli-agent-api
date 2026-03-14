@@ -40,6 +40,17 @@ class StubProvider implements AgentProvider {
             prompt_tokens: 2,
             completion_tokens: 3,
             total_tokens: 5,
+            prompt_tokens_details: {
+              cached_tokens: 0,
+              audio_tokens: 0,
+            },
+            completion_tokens_details: {
+              reasoning_tokens: 0,
+              audio_tokens: 0,
+              accepted_prediction_tokens: 0,
+              rejected_prediction_tokens: 0,
+            },
+            total_cost_usd: 0.42,
           },
         };
       })(),
@@ -79,6 +90,17 @@ describe('chat completions flow', () => {
       prompt_tokens: 2,
       completion_tokens: 3,
       total_tokens: 5,
+      prompt_tokens_details: {
+        cached_tokens: 0,
+        audio_tokens: 0,
+      },
+      completion_tokens_details: {
+        reasoning_tokens: 0,
+        audio_tokens: 0,
+        accepted_prediction_tokens: 0,
+        rejected_prediction_tokens: 0,
+      },
+      total_cost_usd: 0.42,
     });
   });
 
@@ -108,6 +130,10 @@ describe('chat completions flow', () => {
     expect(text).toContain('"role":"assistant"');
     expect(text).toContain('"content":"echo:Hello there!"');
     expect(text).toContain('"finish_reason":"stop"');
+    expect(text).toContain('"choices":[]');
+    expect(text).toContain(
+      '"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5',
+    );
     expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true);
   });
 });

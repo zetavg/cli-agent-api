@@ -10,6 +10,35 @@ export interface ChatCompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  prompt_tokens_details: {
+    cached_tokens: number;
+    audio_tokens: number;
+  };
+  completion_tokens_details: {
+    reasoning_tokens: number;
+    audio_tokens: number;
+    accepted_prediction_tokens: number;
+    rejected_prediction_tokens: number;
+  };
+  [key: string]: unknown;
+}
+
+export function createEmptyUsage(): ChatCompletionUsage {
+  return {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    prompt_tokens_details: {
+      cached_tokens: 0,
+      audio_tokens: 0,
+    },
+    completion_tokens_details: {
+      reasoning_tokens: 0,
+      audio_tokens: 0,
+      accepted_prediction_tokens: 0,
+      rejected_prediction_tokens: 0,
+    },
+  };
 }
 
 export interface ProviderCompletionMetadata {
@@ -70,7 +99,7 @@ export function createChatCompletionResponse(
         finish_reason: finishReason,
       },
     ],
-    usage,
+    usage: usage ?? createEmptyUsage(),
   };
 }
 
@@ -91,6 +120,20 @@ export function createChatCompletionStreamChunk(
         finish_reason: finishReason,
       },
     ],
+  };
+}
+
+export function createChatCompletionUsageStreamChunk(
+  metadata: ProviderCompletionMetadata,
+  usage?: ChatCompletionUsage,
+) {
+  return {
+    id: metadata.id,
+    object: 'chat.completion.chunk',
+    created: metadata.created,
+    model: metadata.model,
+    choices: [],
+    usage: usage ?? createEmptyUsage(),
   };
 }
 
