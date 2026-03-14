@@ -138,12 +138,18 @@ describe('Claude adapter helpers', () => {
   });
 
   test('resolves the Claude working directory to agent-workspace', () => {
-    const baseDir = mkdtempSync(join(tmpdir(), 'cli-agent-api-'));
-    const workspaceDir = join(baseDir, 'agent-workspace');
+    const xdgDataHome = mkdtempSync(join(tmpdir(), 'cli-agent-api-data-'));
+    const workspaceDir = join(
+      xdgDataHome,
+      'cli-agent-api',
+      'agent-workspace',
+    );
 
-    mkdirSync(workspaceDir);
+    mkdirSync(workspaceDir, { recursive: true });
 
-    expect(resolveClaudeWorkingDirectory(baseDir)).toBe(workspaceDir);
+    expect(resolveClaudeWorkingDirectory({ XDG_DATA_HOME: xdgDataHome })).toBe(
+      workspaceDir,
+    );
   });
 
   test('encodes Claude project paths the same way as the CLI session directory', () => {

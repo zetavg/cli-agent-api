@@ -1,6 +1,11 @@
 export { chatCompletionsHandler } from './apis/chat-completions.js';
 export type { ApiHandler } from './apis/types.js';
 export { resolveServeConfig } from './config.js';
+export {
+  resolveAgentWorkspaceDir,
+  resolveDataDir,
+  resolveXdgDataHome,
+} from './config.js';
 export type {
   AgentProvider,
   ProviderChatCompletionInput,

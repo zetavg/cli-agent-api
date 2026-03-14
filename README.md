@@ -14,9 +14,15 @@ Wrap CLI coding agents behind OpenAI-style APIs.
 - Node.js 22+
 - `pnpm`
 - `claude` available on `PATH`
-- An `agent-workspace/` directory at the project root
+- An agent workspace directory at `${DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cli-agent-api}/agent-workspace`
 
-Claude is always started with `cwd` set to `agent-workspace/`. If that directory does not exist, requests will fail before Claude is spawned.
+Path defaults:
+
+- `XDG_DATA_HOME` defaults to `$HOME/.local/share`
+- `DATA_DIR` defaults to `$XDG_DATA_HOME/cli-agent-api`
+- Claude is started with `cwd` set to `$DATA_DIR/agent-workspace`
+
+If that workspace directory does not exist, requests will fail before Claude is spawned.
 
 ## Run
 

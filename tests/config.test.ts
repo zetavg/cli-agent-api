@@ -1,6 +1,14 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, test } from 'vitest';
 
-import { resolveServeConfig } from '../src/config.js';
+import {
+  resolveAgentWorkspaceDir,
+  resolveDataDir,
+  resolveServeConfig,
+  resolveXdgDataHome,
+} from '../src/config.js';
 
 describe('resolveServeConfig', () => {
   test('uses defaults when cli options and env are missing', () => {
@@ -8,6 +16,14 @@ describe('resolveServeConfig', () => {
       host: '127.0.0.1',
       port: 8041,
       apiKeys: [],
+      dataDir: join(homedir(), '.local', 'share', 'cli-agent-api'),
+      agentWorkspaceDir: join(
+        homedir(),
+        '.local',
+        'share',
+        'cli-agent-api',
+        'agent-workspace',
+      ),
     });
   });
 
@@ -29,6 +45,46 @@ describe('resolveServeConfig', () => {
       host: '0.0.0.0',
       port: 9000,
       apiKeys: ['alpha', 'beta'],
+      dataDir: join(homedir(), '.local', 'share', 'cli-agent-api'),
+      agentWorkspaceDir: join(
+        homedir(),
+        '.local',
+        'share',
+        'cli-agent-api',
+        'agent-workspace',
+      ),
+    });
+  });
+
+  test('uses XDG_DATA_HOME when DATA_DIR is not set', () => {
+    expect(resolveXdgDataHome({ XDG_DATA_HOME: '/tmp/xdg-data' })).toBe(
+      '/tmp/xdg-data',
+    );
+    expect(resolveDataDir({ XDG_DATA_HOME: '/tmp/xdg-data' })).toBe(
+      '/tmp/xdg-data/cli-agent-api',
+    );
+    expect(
+      resolveAgentWorkspaceDir({
+        XDG_DATA_HOME: '/tmp/xdg-data',
+      }),
+    ).toBe('/tmp/xdg-data/cli-agent-api/agent-workspace');
+  });
+
+  test('prefers DATA_DIR over XDG_DATA_HOME', () => {
+    expect(
+      resolveServeConfig(
+        {},
+        {
+          DATA_DIR: '/tmp/app-data',
+          XDG_DATA_HOME: '/tmp/xdg-data',
+        },
+      ),
+    ).toEqual({
+      host: '127.0.0.1',
+      port: 8041,
+      apiKeys: [],
+      dataDir: '/tmp/app-data',
+      agentWorkspaceDir: '/tmp/app-data/agent-workspace',
     });
   });
 });

@@ -40,6 +40,8 @@ export async function runCli(argv = process.argv): Promise<void> {
         host: config.host,
         port: config.port,
         apiKeyCount: config.apiKeys.length,
+        dataDir: config.dataDir,
+        agentWorkspaceDir: config.agentWorkspaceDir,
       });
     });
 

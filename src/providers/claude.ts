@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
 
 import { execa } from 'execa';
 
+import { resolveAgentWorkspaceDir } from '../config.js';
 import {
   type ChatCompletionUsage,
   createCompletionMetadata,
@@ -82,7 +83,6 @@ interface ClaudeCliStreamLine {
 }
 
 export const DEFAULT_CLAUDE_TOOLS = ['WebSearch', 'WebFetch'] as const;
-const DEFAULT_CLAUDE_SESSION_VERSION = 'synthetic';
 
 export class ClaudeProvider implements AgentProvider {
   readonly name = 'claude';
@@ -302,8 +302,10 @@ export function buildClaudeArgs(
   return args;
 }
 
-export function resolveClaudeWorkingDirectory(baseDir = process.cwd()): string {
-  const cwd = resolve(baseDir, 'agent-workspace');
+export function resolveClaudeWorkingDirectory(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const cwd = resolveAgentWorkspaceDir(env);
 
   if (!existsSync(cwd)) {
     throw new Error(`Claude workspace directory not found: ${cwd}`);
@@ -349,7 +351,6 @@ export function createClaudeResumeSession(options: {
   }
 
   const sessionId = options.sessionId ?? randomUUID();
-  const version = options.version ?? DEFAULT_CLAUDE_SESSION_VERSION;
   const filePath = join(
     resolveClaudeProjectsDirectory(options.claudeConfigDir),
     encodeClaudeProjectPath(options.cwd),
