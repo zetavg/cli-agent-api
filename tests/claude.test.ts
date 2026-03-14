@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   buildClaudeArgs,
+  DEFAULT_CLAUDE_TOOLS,
   normalizeClaudeUsage,
   parseClaudeLine,
   resolveClaudeWorkingDirectory,
@@ -24,6 +25,10 @@ describe('Claude adapter helpers', () => {
       'stream-json',
       '--include-partial-messages',
       '--verbose',
+      '--tools',
+      DEFAULT_CLAUDE_TOOLS.join(' '),
+      '--allowedTools',
+      DEFAULT_CLAUDE_TOOLS.join(' '),
       '--model',
       'sonnet',
       'Hello there!',

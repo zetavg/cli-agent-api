@@ -9,6 +9,7 @@ export type {
 export {
   buildClaudeArgs,
   ClaudeProvider,
+  DEFAULT_CLAUDE_TOOLS,
   normalizeClaudeUsage,
   parseClaudeLine,
   resolveClaudeWorkingDirectory,

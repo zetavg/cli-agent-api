@@ -54,6 +54,8 @@ interface ClaudeCliStreamLine {
   };
 }
 
+export const DEFAULT_CLAUDE_TOOLS = ['WebSearch', 'WebFetch'] as const;
+
 export class ClaudeProvider implements AgentProvider {
   readonly name = 'claude';
 
@@ -200,6 +202,10 @@ export function buildClaudeArgs(input: ProviderChatCompletionInput): string[] {
     'stream-json',
     '--include-partial-messages',
     '--verbose',
+    '--tools',
+    DEFAULT_CLAUDE_TOOLS.join(' '),
+    '--allowedTools',
+    DEFAULT_CLAUDE_TOOLS.join(' '),
   ];
 
   if (input.model) {
