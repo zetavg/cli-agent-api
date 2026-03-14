@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,20 +6,27 @@ import { describe, expect, test } from 'vitest';
 
 import {
   buildClaudeArgs,
+  createClaudeResumeSession,
   DEFAULT_CLAUDE_TOOLS,
+  encodeClaudeProjectPath,
   normalizeClaudeUsage,
   parseClaudeLine,
+  resolveClaudeProjectsDirectory,
   resolveClaudeWorkingDirectory,
+  seedClaudeResumeSession,
 } from '../src/index.js';
 
 describe('Claude adapter helpers', () => {
   test('builds the expected claude CLI arguments', () => {
     expect(
-      buildClaudeArgs({
-        model: 'sonnet',
-        prompt: 'Hello there!',
-        systemPrompt: 'You are an AI agent.',
-      }),
+      buildClaudeArgs(
+        {
+          model: 'sonnet',
+          prompt: 'Hello there!',
+          systemPrompt: 'You are an AI agent.',
+        },
+        'session-123',
+      ),
     ).toEqual([
       '-p',
       '--output-format',
@@ -32,6 +39,8 @@ describe('Claude adapter helpers', () => {
       DEFAULT_CLAUDE_TOOLS.join(' '),
       '--model',
       'sonnet',
+      '--resume',
+      'session-123',
       '--system-prompt',
       'You are an AI agent.',
       'Hello there!',
@@ -135,6 +144,123 @@ describe('Claude adapter helpers', () => {
     mkdirSync(workspaceDir);
 
     expect(resolveClaudeWorkingDirectory(baseDir)).toBe(workspaceDir);
+  });
+
+  test('encodes Claude project paths the same way as the CLI session directory', () => {
+    expect(
+      encodeClaudeProjectPath(
+        '/Users/z/Projects/cli-agent-api/agent-workspace',
+      ),
+    ).toBe('-Users-z-Projects-cli-agent-api-agent-workspace');
+  });
+
+  test('creates a synthetic Claude resume session from history', () => {
+    const session = createClaudeResumeSession({
+      history: [
+        {
+          role: 'user',
+          content: 'Hello',
+        },
+        {
+          role: 'assistant',
+          content: 'Hi there',
+        },
+      ],
+      cwd: '/tmp/demo/agent-workspace',
+      claudeConfigDir: '/tmp/.claude',
+      sessionId: 'session-123',
+      model: 'sonnet',
+      now: new Date('2026-03-14T12:00:00.000Z'),
+      version: 'test-version',
+    });
+
+    expect(session).toBeDefined();
+    expect(session?.filePath).toBe(
+      '/tmp/.claude/projects/-tmp-demo-agent-workspace/session-123.jsonl',
+    );
+
+    const lines = session!.content
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toMatchObject({
+      type: 'file-history-snapshot',
+      isSnapshotUpdate: false,
+    });
+    expect(lines[1]).toMatchObject({
+      parentUuid: null,
+      type: 'user',
+      message: {
+        role: 'user',
+        content: 'Hello',
+      },
+      cwd: '/tmp/demo/agent-workspace',
+      sessionId: 'session-123',
+      version: 'test-version',
+    });
+    expect(lines[2]).toMatchObject({
+      parentUuid: lines[1].uuid,
+      type: 'assistant',
+      message: {
+        model: 'sonnet',
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: 'Hi there',
+          },
+        ],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+      },
+      cwd: '/tmp/demo/agent-workspace',
+      sessionId: 'session-123',
+      version: 'test-version',
+    });
+    expect(lines[3]).toEqual({
+      type: 'last-prompt',
+      lastPrompt: 'Hello',
+      sessionId: 'session-123',
+    });
+  });
+
+  test('writes a synthetic Claude resume session to disk', async () => {
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), 'claude-config-'));
+    const cwd = '/tmp/demo/agent-workspace';
+    const session = await seedClaudeResumeSession(
+      {
+        model: 'sonnet',
+        history: [
+          {
+            role: 'user',
+            content: 'Hello',
+          },
+        ],
+      },
+      cwd,
+      {
+        claudeConfigDir,
+        sessionId: 'session-456',
+        now: new Date('2026-03-14T12:00:00.000Z'),
+        version: 'test-version',
+      },
+    );
+
+    expect(resolveClaudeProjectsDirectory(claudeConfigDir)).toBe(
+      join(claudeConfigDir, 'projects'),
+    );
+    expect(session?.filePath).toBe(
+      join(
+        claudeConfigDir,
+        'projects',
+        '-tmp-demo-agent-workspace',
+        'session-456.jsonl',
+      ),
+    );
+    expect(readFileSync(session!.filePath, 'utf8')).toBe(session?.content);
   });
 
   test('normalizes Claude usage and preserves extra fields', () => {

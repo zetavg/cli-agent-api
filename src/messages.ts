@@ -1,3 +1,5 @@
+import type { ProviderChatHistoryMessage } from './providers.js';
+
 export interface ChatCompletionMessage {
   role: string;
   content: string | ChatCompletionContentPart[];
@@ -38,6 +40,37 @@ export function extractLatestUserPrompt(
   }
 
   return prompt;
+}
+
+export function extractConversationHistory(
+  messages: ChatCompletionMessage[],
+): ProviderChatHistoryMessage[] {
+  const conversationMessages = messages.filter(
+    (message) => message.role !== 'system' && message.role !== 'developer',
+  );
+
+  if (conversationMessages.length <= 1) {
+    return [];
+  }
+
+  return conversationMessages.slice(0, -1).flatMap((message) => {
+    if (message.role !== 'user' && message.role !== 'assistant') {
+      return [];
+    }
+
+    const content = normalizeMessageContent(message.content).trim();
+
+    if (content.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        role: message.role,
+        content,
+      },
+    ];
+  });
 }
 
 function normalizeMessageContent(

@@ -9,10 +9,14 @@ export type {
 export {
   buildClaudeArgs,
   ClaudeProvider,
+  createClaudeResumeSession,
   DEFAULT_CLAUDE_TOOLS,
+  encodeClaudeProjectPath,
   normalizeClaudeUsage,
   parseClaudeLine,
+  resolveClaudeProjectsDirectory,
   resolveClaudeWorkingDirectory,
+  seedClaudeResumeSession,
 } from './providers/claude.js';
 export type { ServerOptions } from './server.js';
 export { createServer, HttpError } from './server.js';

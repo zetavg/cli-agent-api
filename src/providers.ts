@@ -3,10 +3,16 @@ import type {
   ProviderCompletionMetadata,
 } from './openai.js';
 
+export interface ProviderChatHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface ProviderChatCompletionInput {
   model?: string;
   prompt: string;
   systemPrompt?: string;
+  history?: ProviderChatHistoryMessage[];
 }
 
 export interface ProviderChatCompletionRun {

@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
 
@@ -14,6 +17,7 @@ import type {
   AgentProvider,
   ProviderChatCompletionInput,
   ProviderChatCompletionRun,
+  ProviderChatHistoryMessage,
 } from '../providers.js';
 
 interface ClaudeCliResultLine {
@@ -78,6 +82,7 @@ interface ClaudeCliStreamLine {
 }
 
 export const DEFAULT_CLAUDE_TOOLS = ['WebSearch', 'WebFetch'] as const;
+const DEFAULT_CLAUDE_SESSION_VERSION = 'synthetic';
 
 export class ClaudeProvider implements AgentProvider {
   readonly name = 'claude';
@@ -100,14 +105,19 @@ export async function* streamClaudeChatCompletion(
   signal: AbortSignal,
 ): AsyncIterable<ProviderChatCompletionEvent> {
   const cwd = resolveClaudeWorkingDirectory();
-  const subprocess = execa('claude', buildClaudeArgs(input), {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-    reject: false,
-    cancelSignal: signal,
-  });
+  const resumeSession = await seedClaudeResumeSession(input, cwd);
+  const subprocess = execa(
+    'claude',
+    buildClaudeArgs(input, resumeSession?.sessionId),
+    {
+      cwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      stdin: 'ignore',
+      reject: false,
+      cancelSignal: signal,
+    },
+  );
   const stdout = subprocess.stdout;
 
   if (!stdout) {
@@ -259,7 +269,10 @@ export async function* streamClaudeChatCompletion(
   }
 }
 
-export function buildClaudeArgs(input: ProviderChatCompletionInput): string[] {
+export function buildClaudeArgs(
+  input: ProviderChatCompletionInput,
+  resumeSessionId?: string,
+): string[] {
   const args = [
     '-p',
     '--output-format',
@@ -274,6 +287,10 @@ export function buildClaudeArgs(input: ProviderChatCompletionInput): string[] {
 
   if (input.model) {
     args.push('--model', input.model);
+  }
+
+  if (resumeSessionId) {
+    args.push('--resume', resumeSessionId);
   }
 
   if (input.systemPrompt) {
@@ -293,6 +310,182 @@ export function resolveClaudeWorkingDirectory(baseDir = process.cwd()): string {
   }
 
   return cwd;
+}
+
+export function encodeClaudeProjectPath(cwd: string): string {
+  return cwd.replaceAll(/[^A-Za-z0-9_-]/g, '-');
+}
+
+export function resolveClaudeProjectsDirectory(
+  claudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+): string {
+  return join(claudeConfigDir, 'projects');
+}
+
+export interface ClaudeResumeSessionSeed {
+  sessionId: string;
+  filePath: string;
+  content: string;
+}
+
+export function createClaudeResumeSession(options: {
+  history: ProviderChatHistoryMessage[];
+  cwd: string;
+  sessionId?: string;
+  claudeConfigDir?: string;
+  model?: string;
+  now?: Date;
+  version?: string;
+}): ClaudeResumeSessionSeed | undefined {
+  const history = options.history
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+
+  if (history.length === 0) {
+    return undefined;
+  }
+
+  const sessionId = options.sessionId ?? randomUUID();
+  const version = options.version ?? DEFAULT_CLAUDE_SESSION_VERSION;
+  const filePath = join(
+    resolveClaudeProjectsDirectory(options.claudeConfigDir),
+    encodeClaudeProjectPath(options.cwd),
+    `${sessionId}.jsonl`,
+  );
+  const startedAt = options.now ?? new Date();
+  let previousUuid: string | null = null;
+  let timestampOffsetMs = 0;
+  let lastUserPrompt: string | undefined;
+  const lines: string[] = [];
+
+  for (const message of history) {
+    const uuid = randomUUID();
+    const timestamp = new Date(
+      startedAt.getTime() + timestampOffsetMs,
+    ).toISOString();
+
+    timestampOffsetMs += 1;
+
+    // Note: we commented out some fields that seems to not affect the ability of Claude CLI to restore the session.
+
+    if (message.role === 'user') {
+      lines.push(
+        JSON.stringify({
+          type: 'file-history-snapshot',
+          messageId: uuid,
+          snapshot: {
+            messageId: uuid,
+            trackedFileBackups: {},
+            timestamp,
+          },
+          isSnapshotUpdate: false,
+        }),
+      );
+      lines.push(
+        JSON.stringify({
+          parentUuid: previousUuid,
+          // isSidechain: false,
+          // promptId: randomUUID(),
+          type: 'user',
+          message: {
+            role: 'user',
+            content: message.content,
+          },
+          uuid,
+          timestamp,
+          // permissionMode: 'default',
+          userType: 'external',
+          // cwd: options.cwd,
+          sessionId,
+          // version,
+          __restored: true,
+        }),
+      );
+      lastUserPrompt = message.content;
+      previousUuid = uuid;
+      continue;
+    }
+
+    lines.push(
+      JSON.stringify({
+        parentUuid: previousUuid,
+        // isSidechain: false,
+        message: {
+          // model: options.model ?? 'claude-code',
+          // id: `msg_${randomUUID().replaceAll('-', '')}`,
+          // type: 'message',
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: message.content,
+            },
+          ],
+          // stop_reason: 'end_turn',
+          // stop_sequence: null,
+        },
+        // requestId: `req_${randomUUID().replaceAll('-', '')}`,
+        type: 'assistant',
+        uuid,
+        timestamp,
+        userType: 'external',
+        // cwd: options.cwd,
+        sessionId,
+        // version,
+        __restored: true,
+      }),
+    );
+    previousUuid = uuid;
+  }
+
+  if (lastUserPrompt) {
+    lines.push(
+      JSON.stringify({
+        type: 'last-prompt',
+        lastPrompt: lastUserPrompt,
+        sessionId,
+      }),
+    );
+  }
+
+  return {
+    sessionId,
+    filePath,
+    content: `${lines.join('\n')}\n`,
+  };
+}
+
+export async function seedClaudeResumeSession(
+  input: Pick<ProviderChatCompletionInput, 'history' | 'model'>,
+  cwd: string,
+  options: {
+    claudeConfigDir?: string;
+    sessionId?: string;
+    now?: Date;
+    version?: string;
+  } = {},
+): Promise<ClaudeResumeSessionSeed | undefined> {
+  const session = createClaudeResumeSession({
+    history: input.history ?? [],
+    cwd,
+    claudeConfigDir: options.claudeConfigDir,
+    sessionId: options.sessionId,
+    model: input.model,
+    now: options.now,
+    version: options.version,
+  });
+
+  if (!session) {
+    return undefined;
+  }
+
+  await mkdir(dirname(session.filePath), { recursive: true });
+  await writeFile(session.filePath, session.content, 'utf8');
+
+  return session;
 }
 
 export function parseClaudeLine(

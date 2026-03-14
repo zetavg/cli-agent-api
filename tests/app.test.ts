@@ -93,8 +93,20 @@ class StubProvider implements AgentProvider {
 
 describe('chat completions flow', () => {
   test('uses only the last message as the prompt', async () => {
+    let capturedInput: ProviderChatCompletionInput | undefined;
+
+    class CapturingProvider extends StubProvider {
+      override createChatCompletion(
+        input: ProviderChatCompletionInput,
+        signal: AbortSignal,
+      ): ProviderChatCompletionRun {
+        capturedInput = input;
+        return super.createChatCompletion(input, signal);
+      }
+    }
+
     const result = await prepareChatCompletion(
-      new StubProvider(),
+      new CapturingProvider(),
       {
         model: 'sonnet',
         messages: [
@@ -135,6 +147,12 @@ describe('chat completions flow', () => {
         signature: 'sig_123',
       },
     ]);
+    expect(capturedInput).toEqual({
+      model: 'sonnet',
+      prompt: 'Hello there!',
+      systemPrompt: 'ignore this',
+      history: [],
+    });
     expect(result.body.usage).toEqual({
       prompt_tokens: 2,
       completion_tokens: 3,
@@ -192,6 +210,63 @@ describe('chat completions flow', () => {
       model: 'sonnet',
       prompt: 'Hello there!',
       systemPrompt: 'System message.\nDeveloper message.',
+      history: [],
+    });
+  });
+
+  test('passes prior user and assistant messages as resume history', async () => {
+    let capturedInput: ProviderChatCompletionInput | undefined;
+
+    class CapturingProvider extends StubProvider {
+      override createChatCompletion(
+        input: ProviderChatCompletionInput,
+        signal: AbortSignal,
+      ): ProviderChatCompletionRun {
+        capturedInput = input;
+        return super.createChatCompletion(input, signal);
+      }
+    }
+
+    await prepareChatCompletion(
+      new CapturingProvider(),
+      {
+        model: 'sonnet',
+        messages: [
+          {
+            role: 'system',
+            content: [{ type: 'text', text: 'System message.' }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'First user prompt.' }],
+          },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'First assistant reply.' }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Latest user prompt.' }],
+          },
+        ],
+      },
+      new AbortController().signal,
+    );
+
+    expect(capturedInput).toEqual({
+      model: 'sonnet',
+      prompt: 'Latest user prompt.',
+      systemPrompt: 'System message.',
+      history: [
+        {
+          role: 'user',
+          content: 'First user prompt.',
+        },
+        {
+          role: 'assistant',
+          content: 'First assistant reply.',
+        },
+      ],
     });
   });
 
