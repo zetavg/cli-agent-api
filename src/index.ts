@@ -6,6 +6,7 @@ export {
   resolveDataDir,
   resolveXdgDataHome,
 } from './config.js';
+export { FileSystemKvStore } from './file-system-kv-store.js';
 export type {
   AgentProvider,
   ProviderChatCompletionInput,
@@ -13,15 +14,24 @@ export type {
 } from './providers.js';
 export {
   buildClaudeArgs,
+  claimClaudeResumeSession,
+  CLAUDE_SESSION_MAPPING_STORE_ID,
+  CLAUDE_SESSION_MAPPING_STORE_VERSION,
   ClaudeProvider,
   createClaudeResumeSession,
+  createClaudeSessionHistoryHash,
   DEFAULT_CLAUDE_TOOLS,
   encodeClaudeProjectPath,
+  normalizeClaudeResumeHistory,
   normalizeClaudeUsage,
   parseClaudeLine,
+  parseClaudeSessionHistory,
+  prepareClaudeResumeSession,
   resolveClaudeProjectsDirectory,
+  resolveClaudeSessionFilePath,
   resolveClaudeWorkingDirectory,
   seedClaudeResumeSession,
+  updateClaudeSessionMapping,
 } from './providers/claude.js';
 export type { ServerOptions } from './server.js';
 export { createServer, HttpError } from './server.js';

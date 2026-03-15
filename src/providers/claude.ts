@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -9,6 +9,7 @@ import type { Readable } from 'node:stream';
 import { execa } from 'execa';
 
 import { resolveAgentWorkspaceDir } from '../config.js';
+import { FileSystemKvStore } from '../file-system-kv-store.js';
 import {
   type ChatCompletionUsage,
   createCompletionMetadata,
@@ -83,6 +84,25 @@ interface ClaudeCliStreamLine {
 }
 
 export const DEFAULT_CLAUDE_TOOLS = ['WebSearch', 'WebFetch'] as const;
+export const CLAUDE_SESSION_MAPPING_STORE_ID = 'claude/session_mapping/v1';
+export const CLAUDE_SESSION_MAPPING_STORE_VERSION = 'v1';
+const IGNORE_CLAUDE_SESSION_EVENT = Symbol('ignore-claude-session-event');
+
+interface ClaudeSessionLogLine {
+  type?: string;
+  message?: {
+    role?: string;
+    content?: unknown;
+    stop_reason?: string | null;
+  };
+  sessionId?: string;
+  __restored?: boolean;
+  [key: string]: unknown;
+}
+
+export interface PreparedClaudeResumeSession extends ClaudeResumeSessionSeed {
+  historyHash: string;
+}
 
 export class ClaudeProvider implements AgentProvider {
   readonly name = 'claude';
@@ -105,7 +125,7 @@ export async function* streamClaudeChatCompletion(
   signal: AbortSignal,
 ): AsyncIterable<ProviderChatCompletionEvent> {
   const cwd = resolveClaudeWorkingDirectory();
-  const resumeSession = await seedClaudeResumeSession(input, cwd);
+  const resumeSession = await prepareClaudeResumeSession(input, cwd);
   const subprocess = execa(
     'claude',
     buildClaudeArgs(input, resumeSession?.sessionId),
@@ -257,6 +277,10 @@ export async function* streamClaudeChatCompletion(
       };
     }
 
+    if (resumeSession) {
+      await tryUpdateClaudeSessionMapping(resumeSession);
+    }
+
     yield {
       type: 'response.completed',
       finishReason,
@@ -335,16 +359,9 @@ export function createClaudeResumeSession(options: {
   cwd: string;
   sessionId?: string;
   claudeConfigDir?: string;
-  model?: string;
   now?: Date;
-  version?: string;
 }): ClaudeResumeSessionSeed | undefined {
-  const history = options.history
-    .map((message) => ({
-      role: message.role,
-      content: message.content.trim(),
-    }))
-    .filter((message) => message.content.length > 0);
+  const history = normalizeClaudeResumeHistory(options.history);
 
   if (history.length === 0) {
     return undefined;
@@ -370,8 +387,6 @@ export function createClaudeResumeSession(options: {
 
     timestampOffsetMs += 1;
 
-    // Note: we commented out some fields that seems to not affect the ability of Claude CLI to restore the session.
-
     if (message.role === 'user') {
       lines.push(
         JSON.stringify({
@@ -388,8 +403,6 @@ export function createClaudeResumeSession(options: {
       lines.push(
         JSON.stringify({
           parentUuid: previousUuid,
-          // isSidechain: false,
-          // promptId: randomUUID(),
           type: 'user',
           message: {
             role: 'user',
@@ -397,11 +410,8 @@ export function createClaudeResumeSession(options: {
           },
           uuid,
           timestamp,
-          // permissionMode: 'default',
           userType: 'external',
-          // cwd: options.cwd,
           sessionId,
-          // version,
           __restored: true,
         }),
       );
@@ -413,11 +423,7 @@ export function createClaudeResumeSession(options: {
     lines.push(
       JSON.stringify({
         parentUuid: previousUuid,
-        // isSidechain: false,
         message: {
-          // model: options.model ?? 'claude-code',
-          // id: `msg_${randomUUID().replaceAll('-', '')}`,
-          // type: 'message',
           role: 'assistant',
           content: [
             {
@@ -425,17 +431,12 @@ export function createClaudeResumeSession(options: {
               text: message.content,
             },
           ],
-          // stop_reason: 'end_turn',
-          // stop_sequence: null,
         },
-        // requestId: `req_${randomUUID().replaceAll('-', '')}`,
         type: 'assistant',
         uuid,
         timestamp,
         userType: 'external',
-        // cwd: options.cwd,
         sessionId,
-        // version,
         __restored: true,
       }),
     );
@@ -460,13 +461,12 @@ export function createClaudeResumeSession(options: {
 }
 
 export async function seedClaudeResumeSession(
-  input: Pick<ProviderChatCompletionInput, 'history' | 'model'>,
+  input: Pick<ProviderChatCompletionInput, 'history'>,
   cwd: string,
   options: {
     claudeConfigDir?: string;
     sessionId?: string;
     now?: Date;
-    version?: string;
   } = {},
 ): Promise<ClaudeResumeSessionSeed | undefined> {
   const session = createClaudeResumeSession({
@@ -474,9 +474,7 @@ export async function seedClaudeResumeSession(
     cwd,
     claudeConfigDir: options.claudeConfigDir,
     sessionId: options.sessionId,
-    model: input.model,
     now: options.now,
-    version: options.version,
   });
 
   if (!session) {
@@ -487,6 +485,299 @@ export async function seedClaudeResumeSession(
   await writeFile(session.filePath, session.content, 'utf8');
 
   return session;
+}
+
+export async function prepareClaudeResumeSession(
+  input: Pick<ProviderChatCompletionInput, 'history'>,
+  cwd: string,
+  options: {
+    claudeConfigDir?: string;
+    now?: Date;
+    sessionMappingStore?: FileSystemKvStore;
+  } = {},
+): Promise<PreparedClaudeResumeSession | undefined> {
+  const history = normalizeClaudeResumeHistory(input.history ?? []);
+
+  if (history.length === 0) {
+    return undefined;
+  }
+
+  const historyHash = createClaudeSessionHistoryHash(history);
+  const sessionMappingStore =
+    options.sessionMappingStore ??
+    new FileSystemKvStore(
+      CLAUDE_SESSION_MAPPING_STORE_ID,
+      CLAUDE_SESSION_MAPPING_STORE_VERSION,
+    );
+  const claimedSession = await claimClaudeResumeSession({
+    historyHash,
+    cwd,
+    claudeConfigDir: options.claudeConfigDir,
+    sessionMappingStore,
+  });
+
+  if (claimedSession) {
+    return claimedSession;
+  }
+
+  const seededSession = await seedClaudeResumeSession(input, cwd, {
+    claudeConfigDir: options.claudeConfigDir,
+    now: options.now,
+  });
+
+  if (!seededSession) {
+    return undefined;
+  }
+
+  return {
+    ...seededSession,
+    historyHash,
+  };
+}
+
+export function normalizeClaudeResumeHistory(
+  history: ProviderChatHistoryMessage[],
+): ProviderChatHistoryMessage[] {
+  return history
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+}
+
+export function createClaudeSessionHistoryHash(
+  history: ProviderChatHistoryMessage[],
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify(normalizeClaudeResumeHistory(history)))
+    .digest('hex');
+}
+
+export async function claimClaudeResumeSession(options: {
+  historyHash: string;
+  cwd: string;
+  claudeConfigDir?: string;
+  sessionMappingStore: FileSystemKvStore;
+}): Promise<PreparedClaudeResumeSession | undefined> {
+  let mappedSessionId: string | undefined;
+
+  try {
+    mappedSessionId = (
+      await options.sessionMappingStore.claim(options.historyHash)
+    )?.trim();
+  } catch {
+    return undefined;
+  }
+
+  if (!mappedSessionId || !isClaudeSessionId(mappedSessionId)) {
+    return undefined;
+  }
+
+  const filePath = resolveClaudeSessionFilePath(
+    mappedSessionId,
+    options.cwd,
+    options.claudeConfigDir,
+  );
+  const sessionHistory = await readClaudeSessionHistory(filePath);
+
+  if (!sessionHistory) {
+    return undefined;
+  }
+
+  if (createClaudeSessionHistoryHash(sessionHistory) !== options.historyHash) {
+    return undefined;
+  }
+
+  return {
+    sessionId: mappedSessionId,
+    filePath,
+    content: '',
+    historyHash: options.historyHash,
+  };
+}
+
+export async function updateClaudeSessionMapping(
+  session: Pick<PreparedClaudeResumeSession, 'filePath' | 'sessionId'>,
+  options: {
+    sessionMappingStore?: FileSystemKvStore;
+  } = {},
+): Promise<void> {
+  const history = await readClaudeSessionHistory(session.filePath);
+
+  if (!history || history.length === 0) {
+    return;
+  }
+
+  const sessionMappingStore =
+    options.sessionMappingStore ??
+    new FileSystemKvStore(
+      CLAUDE_SESSION_MAPPING_STORE_ID,
+      CLAUDE_SESSION_MAPPING_STORE_VERSION,
+    );
+
+  await sessionMappingStore.set(
+    createClaudeSessionHistoryHash(history),
+    session.sessionId,
+  );
+}
+
+export async function readClaudeSessionHistory(
+  filePath: string,
+): Promise<ProviderChatHistoryMessage[] | null> {
+  let content: string;
+
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  return parseClaudeSessionHistory(content);
+}
+
+export function parseClaudeSessionHistory(
+  content: string,
+): ProviderChatHistoryMessage[] | null {
+  const history: ProviderChatHistoryMessage[] = [];
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  for (const line of lines) {
+    let parsedLine: ClaudeSessionLogLine;
+
+    try {
+      parsedLine = JSON.parse(line) as ClaudeSessionLogLine;
+    } catch {
+      return null;
+    }
+
+    if (parsedLine.type === 'user') {
+      const userText = extractClaudeSessionUserText(parsedLine);
+
+      if (userText === null) {
+        return null;
+      }
+
+      if (userText.length > 0) {
+        history.push({
+          role: 'user',
+          content: userText,
+        });
+      }
+
+      continue;
+    }
+
+    if (parsedLine.type === 'assistant') {
+      const assistantText = extractClaudeSessionAssistantText(parsedLine);
+
+      if (assistantText === null) {
+        return null;
+      }
+
+      if (assistantText !== IGNORE_CLAUDE_SESSION_EVENT) {
+        history.push({
+          role: 'assistant',
+          content: assistantText,
+        });
+      }
+    }
+  }
+
+  return normalizeClaudeResumeHistory(history);
+}
+
+export function resolveClaudeSessionFilePath(
+  sessionId: string,
+  cwd: string,
+  claudeConfigDir?: string,
+): string {
+  return join(
+    resolveClaudeProjectsDirectory(claudeConfigDir),
+    encodeClaudeProjectPath(cwd),
+    `${sessionId}.jsonl`,
+  );
+}
+
+async function tryUpdateClaudeSessionMapping(
+  session: PreparedClaudeResumeSession,
+): Promise<void> {
+  try {
+    await updateClaudeSessionMapping(session);
+  } catch {
+    // Mapping failures should not affect the Claude response path.
+  }
+}
+
+function extractClaudeSessionUserText(
+  line: ClaudeSessionLogLine,
+): string | null {
+  if (line.message?.role !== 'user') {
+    return null;
+  }
+
+  if (typeof line.message.content !== 'string') {
+    return null;
+  }
+
+  return line.message.content.trim();
+}
+
+function extractClaudeSessionAssistantText(
+  line: ClaudeSessionLogLine,
+): string | typeof IGNORE_CLAUDE_SESSION_EVENT | null {
+  if (
+    line.message?.role !== 'assistant' ||
+    !Array.isArray(line.message.content)
+  ) {
+    return null;
+  }
+
+  const textParts: string[] = [];
+
+  for (const part of line.message.content) {
+    if (!part || typeof part !== 'object') {
+      return null;
+    }
+
+    const contentPart = part as {
+      type?: string;
+      text?: string;
+    };
+
+    if (contentPart.type === 'thinking') {
+      continue;
+    }
+
+    if (contentPart.type !== 'text' || typeof contentPart.text !== 'string') {
+      return null;
+    }
+
+    textParts.push(contentPart.text);
+  }
+
+  const text = textParts.join('\n').trim();
+
+  if (text.length === 0) {
+    return line.message.stop_reason == null && line.__restored !== true
+      ? IGNORE_CLAUDE_SESSION_EVENT
+      : null;
+  }
+
+  if (line.message.stop_reason == null && line.__restored !== true) {
+    return IGNORE_CLAUDE_SESSION_EVENT;
+  }
+
+  return text;
+}
+
+function isClaudeSessionId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 export function parseClaudeLine(
