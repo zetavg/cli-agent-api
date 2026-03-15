@@ -96,7 +96,7 @@ export class FileSystemKvStore {
 function resolveV1KeyPath(rootPath: string, key: string): string {
   validateStoreKey(key);
 
-  return join(rootPath, key.slice(0, 2), key.slice(2));
+  return join(rootPath, key.slice(0, 2), key);
 }
 
 function validateStoreId(id: string): void {

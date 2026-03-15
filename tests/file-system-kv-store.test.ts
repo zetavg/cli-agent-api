@@ -38,7 +38,10 @@ describe('FileSystemKvStore', () => {
 
     expect(await store.get('abcdef')).toBe('session-123');
     expect(
-      readFileSync(join(dataDir, 'claude/session_mapping/v1/ab/cdef'), 'utf8'),
+      readFileSync(
+        join(dataDir, 'claude/session_mapping/v1/ab/abcdef'),
+        'utf8',
+      ),
     ).toBe('session-123');
   });
 
@@ -64,9 +67,9 @@ describe('FileSystemKvStore', () => {
 
     expect(await store.claim('abcdef')).toBe('session-123');
     expect(await store.get('abcdef')).toBeUndefined();
-    expect(existsSync(join(dataDir, 'claude/session_mapping/v1/ab/cdef'))).toBe(
-      false,
-    );
+    expect(
+      existsSync(join(dataDir, 'claude/session_mapping/v1/ab/abcdef')),
+    ).toBe(false);
   });
 
   test('deletes existing keys and tolerates missing keys', async () => {
