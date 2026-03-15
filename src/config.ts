@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -56,6 +57,26 @@ export function resolveAgentWorkspaceDir(env: AppEnv = process.env): string {
   return join(resolveDataDir(env), 'agent-workspace');
 }
 
+export async function ensureAgentWorkspaceDir(
+  env: AppEnv = process.env,
+): Promise<string> {
+  const dataDir = resolveDataDir(env);
+  const agentWorkspaceDir = resolveAgentWorkspaceDir(env);
+
+  await ensureDirectories({
+    dataDir,
+    agentWorkspaceDir,
+  });
+
+  return agentWorkspaceDir;
+}
+
+export async function ensureServeConfigDirectories(
+  config: Pick<ServeConfig, 'dataDir' | 'agentWorkspaceDir'>,
+): Promise<void> {
+  await ensureDirectories(config);
+}
+
 function parsePort(value: number | string): number {
   const port = typeof value === 'number' ? value : Number.parseInt(value, 10);
 
@@ -81,4 +102,12 @@ function resolveOptionalPath(value: string | undefined): string | undefined {
   }
 
   return resolve(trimmed);
+}
+
+async function ensureDirectories(config: {
+  dataDir: string;
+  agentWorkspaceDir: string;
+}): Promise<void> {
+  await mkdir(config.dataDir, { recursive: true });
+  await mkdir(config.agentWorkspaceDir, { recursive: true });
 }

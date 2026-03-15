@@ -2,6 +2,8 @@ export { chatCompletionsHandler } from './apis/chat-completions.js';
 export type { ApiHandler } from './apis/types.js';
 export { resolveServeConfig } from './config.js';
 export {
+  ensureAgentWorkspaceDir,
+  ensureServeConfigDirectories,
   resolveAgentWorkspaceDir,
   resolveDataDir,
   resolveXdgDataHome,
@@ -22,6 +24,7 @@ export {
   createClaudeSessionHistoryHash,
   DEFAULT_CLAUDE_TOOLS,
   encodeClaudeProjectPath,
+  ensureClaudeWorkingDirectory,
   normalizeClaudeResumeHistory,
   normalizeClaudeUsage,
   parseClaudeLine,

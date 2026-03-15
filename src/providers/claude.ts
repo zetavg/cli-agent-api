@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,7 +7,10 @@ import type { Readable } from 'node:stream';
 
 import { execa } from 'execa';
 
-import { resolveAgentWorkspaceDir } from '../config.js';
+import {
+  ensureAgentWorkspaceDir,
+  resolveAgentWorkspaceDir,
+} from '../config.js';
 import { FileSystemKvStore } from '../file-system-kv-store.js';
 import {
   type ChatCompletionUsage,
@@ -124,7 +126,7 @@ export async function* streamClaudeChatCompletion(
   input: ProviderChatCompletionInput,
   signal: AbortSignal,
 ): AsyncIterable<ProviderChatCompletionEvent> {
-  const cwd = resolveClaudeWorkingDirectory();
+  const cwd = await ensureClaudeWorkingDirectory();
   const resumeSession = await prepareClaudeResumeSession(input, cwd);
   const subprocess = execa(
     'claude',
@@ -329,13 +331,13 @@ export function buildClaudeArgs(
 export function resolveClaudeWorkingDirectory(
   env: Record<string, string | undefined> = process.env,
 ): string {
-  const cwd = resolveAgentWorkspaceDir(env);
+  return resolveAgentWorkspaceDir(env);
+}
 
-  if (!existsSync(cwd)) {
-    throw new Error(`Claude workspace directory not found: ${cwd}`);
-  }
-
-  return cwd;
+export async function ensureClaudeWorkingDirectory(
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  return ensureAgentWorkspaceDir(env);
 }
 
 export function encodeClaudeProjectPath(cwd: string): string {

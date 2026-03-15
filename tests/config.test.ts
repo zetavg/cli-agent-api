@@ -1,9 +1,11 @@
-import { homedir } from 'node:os';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'vitest';
 
 import {
+  ensureAgentWorkspaceDir,
   resolveAgentWorkspaceDir,
   resolveDataDir,
   resolveServeConfig,
@@ -86,5 +88,23 @@ describe('resolveServeConfig', () => {
       dataDir: '/tmp/app-data',
       agentWorkspaceDir: '/tmp/app-data/agent-workspace',
     });
+  });
+
+  test('creates the data dir and agent workspace under XDG_DATA_HOME', async () => {
+    const xdgDataHome = join(
+      mkdtempSync(join(tmpdir(), 'cli-agent-api-')),
+      'xdg-data',
+    );
+    const agentWorkspaceDir = join(
+      xdgDataHome,
+      'cli-agent-api',
+      'agent-workspace',
+    );
+
+    await expect(
+      ensureAgentWorkspaceDir({ XDG_DATA_HOME: xdgDataHome }),
+    ).resolves.toBe(agentWorkspaceDir);
+    expect(existsSync(join(xdgDataHome, 'cli-agent-api'))).toBe(true);
+    expect(existsSync(agentWorkspaceDir)).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ import {
   createClaudeSessionHistoryHash,
   DEFAULT_CLAUDE_TOOLS,
   encodeClaudeProjectPath,
+  ensureClaudeWorkingDirectory,
   normalizeClaudeUsage,
   parseClaudeLine,
   parseClaudeSessionHistory,
@@ -171,15 +172,20 @@ describe('Claude adapter helpers', () => {
     expect(parseClaudeLine('not-json')).toBeNull();
   });
 
-  test('resolves the Claude working directory to agent-workspace', () => {
-    const xdgDataHome = mkdtempSync(join(tmpdir(), 'cli-agent-api-data-'));
+  test('ensures the Claude working directory under agent-workspace exists', async () => {
+    const xdgDataHome = join(
+      mkdtempSync(join(tmpdir(), 'cli-agent-api-data-')),
+      'xdg-data',
+    );
     const workspaceDir = join(xdgDataHome, 'cli-agent-api', 'agent-workspace');
 
-    mkdirSync(workspaceDir, { recursive: true });
-
+    await expect(
+      ensureClaudeWorkingDirectory({ XDG_DATA_HOME: xdgDataHome }),
+    ).resolves.toBe(workspaceDir);
     expect(resolveClaudeWorkingDirectory({ XDG_DATA_HOME: xdgDataHome })).toBe(
       workspaceDir,
     );
+    expect(existsSync(workspaceDir)).toBe(true);
   });
 
   test('encodes Claude project paths the same way as the CLI session directory', () => {
