@@ -3,6 +3,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -178,12 +180,14 @@ describe('Claude adapter helpers', () => {
       'xdg-data',
     );
     const workspaceDir = join(xdgDataHome, 'cli-agent-api', 'agent-workspace');
+    const ensuredWorkspaceDir = await ensureClaudeWorkingDirectory({
+      XDG_DATA_HOME: xdgDataHome,
+    });
+    const resolvedWorkspaceDir = realpathSync(workspaceDir);
 
-    await expect(
-      ensureClaudeWorkingDirectory({ XDG_DATA_HOME: xdgDataHome }),
-    ).resolves.toBe(workspaceDir);
+    expect(ensuredWorkspaceDir).toBe(resolvedWorkspaceDir);
     expect(resolveClaudeWorkingDirectory({ XDG_DATA_HOME: xdgDataHome })).toBe(
-      workspaceDir,
+      resolvedWorkspaceDir,
     );
     expect(existsSync(workspaceDir)).toBe(true);
   });
@@ -194,6 +198,19 @@ describe('Claude adapter helpers', () => {
         '/Users/z/Projects/cli-agent-api/agent-workspace',
       ),
     ).toBe('-Users-z-Projects-cli-agent-api-agent-workspace');
+  });
+
+  test('encodes Claude project paths using the canonical real path when available', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'cli-agent-api-claude-'));
+    const realWorkspaceDir = join(rootDir, 'real', 'agent-workspace');
+    const symlinkRootDir = join(rootDir, 'link');
+
+    mkdirSync(realWorkspaceDir, { recursive: true });
+    symlinkSync(join(rootDir, 'real'), symlinkRootDir, 'dir');
+
+    expect(
+      encodeClaudeProjectPath(join(symlinkRootDir, 'agent-workspace')),
+    ).toBe(encodeClaudeProjectPath(realWorkspaceDir));
   });
 
   test('creates a synthetic Claude resume session from history', () => {
@@ -301,6 +318,23 @@ describe('Claude adapter helpers', () => {
     expect(
       parseClaudeSessionHistory(
         `{"type":"user","message":{"role":"user","content":"Hello"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":""}],"stop_reason":null}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}],"stop_reason":"end_turn"}}\n`,
+      ),
+    ).toEqual([
+      {
+        role: 'user',
+        content: 'Hello',
+      },
+      {
+        role: 'assistant',
+        content: 'Hi there',
+      },
+    ]);
+  });
+
+  test('parses final assistant text lines even when stop_reason is null', () => {
+    expect(
+      parseClaudeSessionHistory(
+        `{"type":"user","message":{"role":"user","content":"Hello"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Working"}],"stop_reason":null}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}],"stop_reason":null}}\n{"type":"last-prompt","lastPrompt":"Hello"}\n`,
       ),
     ).toEqual([
       {

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -331,17 +332,17 @@ export function buildClaudeArgs(
 export function resolveClaudeWorkingDirectory(
   env: Record<string, string | undefined> = process.env,
 ): string {
-  return resolveAgentWorkspaceDir(env);
+  return resolveClaudePath(resolveAgentWorkspaceDir(env));
 }
 
 export async function ensureClaudeWorkingDirectory(
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
-  return ensureAgentWorkspaceDir(env);
+  return resolveClaudePathAsync(await ensureAgentWorkspaceDir(env));
 }
 
 export function encodeClaudeProjectPath(cwd: string): string {
-  return cwd.replaceAll(/[^A-Za-z0-9_-]/g, '-');
+  return resolveClaudePath(cwd).replaceAll(/[^A-Za-z0-9_-]/g, '-');
 }
 
 export function resolveClaudeProjectsDirectory(
@@ -642,6 +643,18 @@ export function parseClaudeSessionHistory(
   content: string,
 ): ProviderChatHistoryMessage[] | null {
   const history: ProviderChatHistoryMessage[] = [];
+  let pendingAssistantText: string | null = null;
+  const flushPendingAssistantMessage = (): void => {
+    if (pendingAssistantText === null) {
+      return;
+    }
+
+    history.push({
+      role: 'assistant',
+      content: pendingAssistantText,
+    });
+    pendingAssistantText = null;
+  };
   const lines = content
     .split('\n')
     .map((line) => line.trim())
@@ -657,6 +670,7 @@ export function parseClaudeSessionHistory(
     }
 
     if (parsedLine.type === 'user') {
+      flushPendingAssistantMessage();
       const userText = extractClaudeSessionUserText(parsedLine);
 
       if (userText === null) {
@@ -681,13 +695,12 @@ export function parseClaudeSessionHistory(
       }
 
       if (assistantText !== IGNORE_CLAUDE_SESSION_EVENT) {
-        history.push({
-          role: 'assistant',
-          content: assistantText,
-        });
+        pendingAssistantText = assistantText;
       }
     }
   }
+
+  flushPendingAssistantMessage();
 
   return normalizeClaudeResumeHistory(history);
 }
@@ -711,6 +724,22 @@ async function tryUpdateClaudeSessionMapping(
     await updateClaudeSessionMapping(session);
   } catch {
     // Mapping failures should not affect the Claude response path.
+  }
+}
+
+function resolveClaudePath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+async function resolveClaudePathAsync(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
   }
 }
 
@@ -769,13 +798,8 @@ function extractClaudeSessionAssistantText(
       : null;
   }
 
-  if (line.message.stop_reason == null && line.__restored !== true) {
-    return IGNORE_CLAUDE_SESSION_EVENT;
-  }
-
   return text;
 }
-
 function isClaudeSessionId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     value,
