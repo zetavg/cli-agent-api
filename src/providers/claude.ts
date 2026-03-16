@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
 
-import { execa } from 'execa';
+import { execa, execaSync } from 'execa';
 
 import {
   ensureAgentWorkspaceDir,
@@ -132,8 +132,9 @@ export async function* streamClaudeChatCompletion(
 ): AsyncIterable<ProviderChatCompletionEvent> {
   const cwd = await ensureClaudeWorkingDirectory();
   const resumeSession = await prepareClaudeResumeSession(input, cwd);
+  const claudeCommand = resolveClaudeCommand();
   const subprocess = execa(
-    'claude',
+    claudeCommand,
     buildClaudeArgs(input, resumeSession?.sessionId),
     {
       cwd,
@@ -1123,4 +1124,37 @@ async function consumeStderr(
   for await (const chunk of stream) {
     sink.push(String(chunk));
   }
+}
+
+let cachedClaudeCommand: string | undefined;
+
+/**
+ * Resolves the Claude CLI command to use.
+ * First checks if `claude` is available on PATH, then falls back to
+ * `$HOME/.local/bin/claude` (the default install location).
+ */
+export function resolveClaudeCommand(): string {
+  if (cachedClaudeCommand) {
+    return cachedClaudeCommand;
+  }
+
+  // Check if `claude` is available on PATH.
+  try {
+    execaSync('which', ['claude']);
+    cachedClaudeCommand = 'claude';
+    return cachedClaudeCommand;
+  } catch {
+    // Not found on PATH, continue to fallback.
+  }
+
+  // Check the default install location.
+  const fallbackPath = join(homedir(), '.local', 'bin', 'claude');
+  if (existsSync(fallbackPath)) {
+    cachedClaudeCommand = fallbackPath;
+    return cachedClaudeCommand;
+  }
+
+  // Fall back to 'claude' and let it fail with a clear error at execution time.
+  cachedClaudeCommand = 'claude';
+  return cachedClaudeCommand;
 }

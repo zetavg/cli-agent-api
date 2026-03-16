@@ -30,6 +30,7 @@ export {
   parseClaudeLine,
   parseClaudeSessionHistory,
   prepareClaudeResumeSession,
+  resolveClaudeCommand,
   resolveClaudeProjectsDirectory,
   resolveClaudeSessionFilePath,
   resolveClaudeWorkingDirectory,
