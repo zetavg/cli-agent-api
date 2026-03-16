@@ -158,3 +158,28 @@ pnpm typecheck
 ```bash
 pnpm build
 ```
+
+## Release and publish
+
+Create a local package tarball:
+
+```bash
+pnpm run pack-package
+```
+
+Publish an existing tarball:
+
+```bash
+pnpm run publish-packed-package --tag latest
+```
+
+GitHub Actions now provides:
+
+- `Checks` for lint, typecheck, and test
+- `Pack Package` to build and upload `package.tgz`
+- `Pack and Publish Package` to run checks, pack, and publish on GitHub release publish or manual dispatch
+
+For GitHub Actions publishing, configure the `NPM` environment on the repository:
+
+- `NPM_REGISTRY_SERVER` variable when publishing to a non-default registry
+- `NPM_AUTH_TOKEN` secret when not using npm trusted publishing

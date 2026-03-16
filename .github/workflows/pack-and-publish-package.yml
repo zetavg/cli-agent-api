@@ -1,0 +1,39 @@
+name: Pack and Publish Package
+run-name: Pack and Publish ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, e.g. `1.0.0` or `1.2.3-pre1`
+        type: string
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  checks:
+    name: Run Checks
+    uses: ./.github/workflows/checks.yml
+
+  pack:
+    name: Pack Package
+    uses: ./.github/workflows/pack-package.yml
+    with:
+      version: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+
+  publish:
+    name: Publish Package
+    needs:
+      - checks
+      - pack
+    uses: ./.github/workflows/publish-package.yml
+    with:
+      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+      version: ${{ needs.pack.outputs.version }}
+      packed-package-artifact-name: ${{ needs.pack.outputs.packed-package-artifact-name }}
+    secrets: inherit

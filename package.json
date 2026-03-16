@@ -2,9 +2,13 @@
   "name": "cli-agent-api",
   "type": "module",
   "version": "0.0.0",
+  "packageManager": "pnpm@10.16.1",
   "description": "API for your CLI agents.",
   "author": "Pokai Chang <mail@zeta.vg>",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "homepage": "https://github.com/zetavg/cli-agent-api#readme",
   "repository": {
     "type": "git",
@@ -31,6 +35,9 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest",
+    "pack-package": "pnpm run build && pnpm pack --out package.tgz",
+    "publish-packed-package": "npm publish package.tgz --access public",
+    "clean": "rm -f package.tgz",
     "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {

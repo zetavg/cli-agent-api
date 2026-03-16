@@ -1,0 +1,68 @@
+name: Publish Package
+run-name: Pack and Publish ${{ inputs.version }}
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The git ref (tag or branch) to publish. This will not affect the actual content being published but may affect npm provenance.
+        type: string
+        required: false
+      version:
+        description: Version, e.g. `1.0.0` or `1.2.3-pre1`. This is only used for output and to detect prereleases.
+        type: string
+        required: true
+      packed-package-artifact-name:
+        description: The name of the artifact containing the packed package.
+        type: string
+        required: true
+    secrets:
+      NPM_AUTH_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish Package to ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    env:
+      NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN || '' }}
+      NPM_REGISTRY_SERVER: ${{ vars.NPM_REGISTRY_SERVER || 'https://registry.npmjs.org' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - NPM
+    environment:
+      name: ${{ matrix.environment }}
+      url: ${{ vars.URL }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+      - name: Download packed package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.packed-package-artifact-name }}
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          skip-pnpm-install: true
+      - name: Update npm
+        run: |
+          npm install -g npm@latest
+          npm --version
+      - name: Setup registry
+        if: ${{ env.NPM_AUTH_TOKEN != '' }}
+        run: |
+          npm config set registry "$NPM_REGISTRY_SERVER"
+          echo "NPM Registry: $(npm config get registry)"
+          echo "${NPM_REGISTRY_SERVER}" | sed -e 's#http[s]*://##' -e 's#/$##' -e 's#^#//#' -e 's#$#/:_authToken=\${NPM_AUTH_TOKEN}#' > .npmrc
+      - name: Publish package
+        run: |
+          pnpm run publish-packed-package --tag ${{ contains(inputs.version, '-') && 'next' || 'latest' }}
