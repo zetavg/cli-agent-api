@@ -23,6 +23,7 @@ import {
   DEFAULT_CLAUDE_TOOLS,
   encodeClaudeProjectPath,
   ensureClaudeWorkingDirectory,
+  normalizeClaudeResumeHistory,
   normalizeClaudeUsage,
   parseClaudeLine,
   parseClaudeSessionHistory,
@@ -211,6 +212,67 @@ describe('Claude adapter helpers', () => {
     expect(
       encodeClaudeProjectPath(join(symlinkRootDir, 'agent-workspace')),
     ).toBe(encodeClaudeProjectPath(realWorkspaceDir));
+  });
+
+  test('normalizes assistant history by removing inline thinking tags', () => {
+    expect(
+      normalizeClaudeResumeHistory([
+        {
+          role: 'user',
+          content: 'What is your favorite food?',
+        },
+        {
+          role: 'assistant',
+          content:
+            '<think>The user asked about food.</think>\nI do not eat food.',
+        },
+        {
+          role: 'assistant',
+          content:
+            '<thinking>The user switched languages.</thinking>\nI do not have real taste buds.',
+        },
+      ]),
+    ).toEqual([
+      {
+        role: 'user',
+        content: 'What is your favorite food?',
+      },
+      {
+        role: 'assistant',
+        content: 'I do not eat food.',
+      },
+      {
+        role: 'assistant',
+        content: 'I do not have real taste buds.',
+      },
+    ]);
+  });
+
+  test('hashes assistant history the same with or without inline thinking tags', () => {
+    expect(
+      createClaudeSessionHistoryHash([
+        {
+          role: 'user',
+          content: 'I love all of them!',
+        },
+        {
+          role: 'assistant',
+          content:
+            '<think>The user switched languages.</think>\nTuna is excellent!',
+        },
+      ]),
+    ).toBe(
+      createClaudeSessionHistoryHash([
+        {
+          role: 'user',
+          content: 'I love all of them!',
+        },
+        {
+          role: 'assistant',
+          content: 'Tuna is excellent!',
+        },
+      ]),
+    );
   });
 
   test('creates a synthetic Claude resume session from history', () => {

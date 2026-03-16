@@ -90,6 +90,9 @@ export const DEFAULT_CLAUDE_TOOLS = ['WebSearch', 'WebFetch'] as const;
 export const CLAUDE_SESSION_MAPPING_STORE_ID = 'claude/session_mapping/v1';
 export const CLAUDE_SESSION_MAPPING_STORE_VERSION = 'v1';
 const IGNORE_CLAUDE_SESSION_EVENT = Symbol('ignore-claude-session-event');
+const CLAUDE_ASSISTANT_THINK_TAG_PATTERN = /<think\b[^>]*>[\s\S]*?<\/think>/gi;
+const CLAUDE_ASSISTANT_THINKING_TAG_PATTERN =
+  /<thinking\b[^>]*>[\s\S]*?<\/thinking>/gi;
 
 interface ClaudeSessionLogLine {
   type?: string;
@@ -544,7 +547,7 @@ export function normalizeClaudeResumeHistory(
   return history
     .map((message) => ({
       role: message.role,
-      content: message.content.trim(),
+      content: normalizeClaudeResumeMessageContent(message),
     }))
     .filter((message) => message.content.length > 0);
 }
@@ -741,6 +744,22 @@ async function resolveClaudePathAsync(path: string): Promise<string> {
   } catch {
     return path;
   }
+}
+
+function normalizeClaudeResumeMessageContent(
+  message: ProviderChatHistoryMessage,
+): string {
+  if (message.role !== 'assistant') {
+    return message.content.trim();
+  }
+
+  return stripClaudeAssistantReasoning(message.content).trim();
+}
+
+function stripClaudeAssistantReasoning(content: string): string {
+  return content
+    .replace(CLAUDE_ASSISTANT_THINK_TAG_PATTERN, '')
+    .replace(CLAUDE_ASSISTANT_THINKING_TAG_PATTERN, '');
 }
 
 function extractClaudeSessionUserText(

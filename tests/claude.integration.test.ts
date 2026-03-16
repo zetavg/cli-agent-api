@@ -231,6 +231,82 @@ describeClaudeIntegration('Claude provider integration', () => {
     });
   }, 120_000);
 
+  test('reuses the same Claude session when old assistant history only differs by thinking tags', async () => {
+    await withIntegrationDataDir(async () => {
+      const historyWithThinking: ProviderChatHistoryMessage[] = [
+        {
+          role: 'user',
+          content: 'Pick a favorite fruit and remember it.',
+        },
+        {
+          role: 'assistant',
+          content:
+            '<think>The user asked me to remember a fruit.</think>\nThe favorite fruit is PEAR.',
+        },
+      ];
+      const firstPrompt =
+        'What fruit did you say was favorite? Reply with only the fruit.';
+      const firstAnswer = await runClaudeProviderCompletion({
+        history: historyWithThinking,
+        prompt: firstPrompt,
+      });
+      const firstExpandedHistory = [
+        ...historyWithThinking,
+        {
+          role: 'user' as const,
+          content: firstPrompt,
+        },
+        {
+          role: 'assistant' as const,
+          content: firstAnswer,
+        },
+      ];
+      const firstSessionId = await getMappedSessionId(firstExpandedHistory);
+
+      expect(firstAnswer).toBe('PEAR');
+      expect(firstSessionId).toBeDefined();
+
+      const equivalentHistoryWithoutThinking: ProviderChatHistoryMessage[] = [
+        {
+          role: 'user',
+          content: 'Pick a favorite fruit and remember it.',
+        },
+        {
+          role: 'assistant',
+          content: 'The favorite fruit is PEAR.',
+        },
+        {
+          role: 'user',
+          content: firstPrompt,
+        },
+        {
+          role: 'assistant',
+          content: firstAnswer,
+        },
+      ];
+      const secondPrompt = 'Say the fruit again. Reply with only the fruit.';
+      const secondAnswer = await runClaudeProviderCompletion({
+        history: equivalentHistoryWithoutThinking,
+        prompt: secondPrompt,
+      });
+      const secondExpandedHistory = [
+        ...equivalentHistoryWithoutThinking,
+        {
+          role: 'user' as const,
+          content: secondPrompt,
+        },
+        {
+          role: 'assistant' as const,
+          content: secondAnswer,
+        },
+      ];
+      const secondSessionId = await getMappedSessionId(secondExpandedHistory);
+
+      expect(secondAnswer).toBe('PEAR');
+      expect(secondSessionId).toBe(firstSessionId);
+    });
+  }, 120_000);
+
   test('applies the system prompt', async () => {
     await withIntegrationDataDir(async () => {
       const response = await runClaudeProviderCompletion({
