@@ -25,10 +25,17 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option('--host <host>', 'Host to bind to')
     .option('--port <port>', 'Port to bind to')
     .option('--api-key <apiKeys>', 'Comma-separated bearer tokens to require')
+    .option(
+      '--tool-mode <mode>',
+      'Tool handling mode: "native" (agent uses its own tools) or "bridge" (expose client-provided tools)',
+    )
     .action(async (options: ServeCliOptions) => {
       const config = resolveServeConfig(options);
       await ensureServeConfigDirectories(config);
-      const app = createServer({ apiKeys: config.apiKeys });
+      const app = createServer({
+        apiKeys: config.apiKeys,
+        toolMode: config.toolMode,
+      });
       const server = createHttpServer(app);
 
       await new Promise<void>((resolve, reject) => {
@@ -47,6 +54,7 @@ export async function runCli(argv = process.argv): Promise<void> {
         apiKeyCount: config.apiKeys.length,
         dataDir: config.dataDir,
         agentWorkspaceDir: config.agentWorkspaceDir,
+        toolMode: config.toolMode,
       });
     });
 

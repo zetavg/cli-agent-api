@@ -1,6 +1,7 @@
 export { chatCompletionsHandler } from './apis/chat-completions.js';
 export type { ApiHandler } from './apis/types.js';
-export { resolveServeConfig } from './config.js';
+export type { ToolMode } from './config.js';
+export { parseToolMode, resolveServeConfig } from './config.js';
 export {
   ensureAgentWorkspaceDir,
   ensureServeConfigDirectories,
@@ -9,6 +10,18 @@ export {
   resolveXdgDataHome,
 } from './config.js';
 export { FileSystemKvStore } from './file-system-kv-store.js';
+export type {
+  ChatCompletionMessage,
+  ChatCompletionToolCall,
+  ConversationMessage,
+  LatestTurn,
+} from './messages.js';
+export {
+  extractConversationHistory,
+  extractLatestTurn,
+  extractSystemPrompt,
+  toNativeProviderHistory,
+} from './messages.js';
 export type {
   AgentProvider,
   ProviderChatCompletionInput,
@@ -59,3 +72,20 @@ export {
 } from './providers/cursor.js';
 export type { ServerOptions } from './server.js';
 export { createServer, HttpError } from './server.js';
+export type {
+  BridgeToolDefinition,
+  BridgeVariant,
+  ToolBridgeParserEvent,
+  ToolCallStreamParser,
+} from './tool-bridge.js';
+export {
+  buildToolSystemPromptSection,
+  createToolCallStreamParser,
+  formatHistoryForBridge,
+  formatToolResultsForPrompt,
+  TOOL_CALL_CLOSE,
+  TOOL_CALL_OPEN,
+  TOOL_RESULT_CLOSE,
+  TOOL_RESULT_OPEN_PREFIX,
+  TOOL_RESULT_OPEN_SUFFIX,
+} from './tool-bridge.js';

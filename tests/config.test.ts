@@ -26,6 +26,7 @@ describe('resolveServeConfig', () => {
         'cli-agent-api',
         'agent-workspace',
       ),
+      toolMode: 'native',
     });
   });
 
@@ -55,6 +56,7 @@ describe('resolveServeConfig', () => {
         'cli-agent-api',
         'agent-workspace',
       ),
+      toolMode: 'native',
     });
   });
 
@@ -87,6 +89,7 @@ describe('resolveServeConfig', () => {
       apiKeys: [],
       dataDir: '/tmp/app-data',
       agentWorkspaceDir: '/tmp/app-data/agent-workspace',
+      toolMode: 'native',
     });
   });
 

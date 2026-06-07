@@ -1,22 +1,34 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Request, Response } from 'express';
 
 import {
   type ChatCompletionMessage,
   extractConversationHistory,
-  extractLatestUserPrompt,
+  extractLatestTurn,
   extractSystemPrompt,
 } from '../messages.js';
 import {
+  type ChatCompletionFinishReason,
   type ChatCompletionReasoningDetail,
+  type ChatCompletionResponseToolCall,
   type ChatCompletionsRequestBody,
+  type ChatCompletionUsage,
   createChatCompletionResponse,
   createChatCompletionStreamChunk,
   createChatCompletionUsageStreamChunk,
   toSseData,
 } from '../openai.js';
-import type { AgentProvider } from '../providers.js';
+import type {
+  AgentProvider,
+  ProviderChatCompletionInput,
+} from '../providers.js';
+import {
+  formatHistoryForBridge,
+  formatToolResultsForPrompt,
+} from '../tool-bridge.js';
 
-import type { ApiHandler } from './types.js';
+import type { ApiHandler, ApiHandlerContext } from './types.js';
 
 export const chatCompletionsHandler: ApiHandler = {
   method: 'post',
@@ -29,11 +41,13 @@ export async function handleChatCompletions(
   response: Response,
   provider: AgentProvider,
   signal: AbortSignal,
+  context: ApiHandlerContext = {},
 ) {
   const result = await prepareChatCompletion(
     provider,
     request.body as ChatCompletionsRequestBody,
     signal,
+    { toolMode: context.toolMode },
   );
 
   if (result.type === 'stream') {
@@ -56,20 +70,47 @@ export async function prepareChatCompletion(
   provider: AgentProvider,
   body: ChatCompletionsRequestBody,
   signal: AbortSignal,
+  options: { toolMode?: 'native' | 'bridge' } = {},
 ) {
   const messages = normalizeMessages(body.messages);
-  const prompt = extractLatestUserPrompt(messages);
   const systemPrompt = extractSystemPrompt(messages);
-  const history = extractConversationHistory(messages);
-  const run = provider.createChatCompletion(
-    {
-      model: typeof body.model === 'string' ? body.model : undefined,
-      prompt,
-      systemPrompt,
-      history,
-    },
-    signal,
-  );
+  const latestTurn = extractLatestTurn(messages);
+  const conversation = extractConversationHistory(messages);
+
+  const bridge =
+    (options.toolMode ?? 'native') === 'bridge' &&
+    Array.isArray(body.tools) &&
+    body.tools.length > 0;
+
+  const prompt =
+    latestTurn.kind === 'user'
+      ? latestTurn.text
+      : bridge
+        ? formatToolResultsForPrompt(latestTurn.items)
+        : latestTurn.items.map((item) => item.content).join('\n\n');
+
+  const history = bridge
+    ? formatHistoryForBridge(conversation)
+    : conversation.flatMap((message) =>
+        (message.role === 'user' || message.role === 'assistant') &&
+        message.content.length > 0
+          ? [{ role: message.role, content: message.content }]
+          : [],
+      );
+
+  const input: ProviderChatCompletionInput = {
+    model: typeof body.model === 'string' ? body.model : undefined,
+    prompt,
+    systemPrompt,
+    history,
+  };
+
+  if (bridge) {
+    input.tools = body.tools;
+    input.toolMode = 'bridge';
+  }
+
+  const run = provider.createChatCompletion(input, signal);
 
   if (body.stream === true) {
     return {
@@ -84,14 +125,22 @@ export async function prepareChatCompletion(
   };
 }
 
+interface ToolCallAccumulator {
+  id?: string;
+  name?: string;
+  arguments: string;
+}
+
 export async function collectChatCompletion(
   providerRun: ReturnType<AgentProvider['createChatCompletion']>,
 ) {
   let content = '';
-  let finishReason: 'stop' | 'length' = 'stop';
-  let usage;
+  let finishReason: ChatCompletionFinishReason = 'stop';
+  let usage: ChatCompletionUsage | undefined;
   let reasoningText = '';
   const reasoningDetails = new Map<string, ChatCompletionReasoningDetail>();
+  const toolCalls = new Map<number, ToolCallAccumulator>();
+  const toolCallOrder: number[] = [];
 
   for await (const event of providerRun.events) {
     if (event.type === 'response.metadata') {
@@ -105,6 +154,26 @@ export async function collectChatCompletion(
     }
 
     if (event.type === 'response.output_tool_call.delta') {
+      let entry = toolCalls.get(event.toolCallIndex);
+
+      if (!entry) {
+        entry = { arguments: '' };
+        toolCalls.set(event.toolCallIndex, entry);
+        toolCallOrder.push(event.toolCallIndex);
+      }
+
+      if (event.toolCallId !== undefined) {
+        entry.id = event.toolCallId;
+      }
+
+      if (event.toolName !== undefined) {
+        entry.name = event.toolName;
+      }
+
+      if (event.toolArguments !== undefined) {
+        entry.arguments += event.toolArguments;
+      }
+
       continue;
     }
 
@@ -134,6 +203,18 @@ export async function collectChatCompletion(
     usage = event.usage;
   }
 
+  const assembledToolCalls: ChatCompletionResponseToolCall[] = toolCallOrder
+    .map((index) => toolCalls.get(index))
+    .filter((entry): entry is ToolCallAccumulator => entry?.name !== undefined)
+    .map((entry) => ({
+      id: entry.id ?? `call_${randomUUID().replaceAll('-', '')}`,
+      type: 'function',
+      function: {
+        name: entry.name as string,
+        arguments: entry.arguments,
+      },
+    }));
+
   return createChatCompletionResponse(
     providerRun.metadata,
     content,
@@ -143,6 +224,7 @@ export async function collectChatCompletion(
     reasoningDetails.size > 0
       ? [...reasoningDetails.values()].sort((a, b) => a.index - b.index)
       : undefined,
+    assembledToolCalls.length > 0 ? assembledToolCalls : undefined,
   );
 }
 
@@ -150,14 +232,10 @@ export async function* serializeChatCompletionStream(
   providerRun: ReturnType<AgentProvider['createChatCompletion']>,
 ) {
   let sentRoleChunk = false;
-  let usage;
+  let usage: ChatCompletionUsage | undefined;
+  let finishReason: ChatCompletionFinishReason = 'stop';
 
-  for await (const event of providerRun.events) {
-    if (event.type === 'response.metadata') {
-      providerRun.metadata.model = event.model;
-      continue;
-    }
-
+  const ensureRoleChunk = function* () {
     if (!sentRoleChunk) {
       yield toSseData(
         createChatCompletionStreamChunk(providerRun.metadata, {
@@ -166,6 +244,15 @@ export async function* serializeChatCompletionStream(
       );
       sentRoleChunk = true;
     }
+  };
+
+  for await (const event of providerRun.events) {
+    if (event.type === 'response.metadata') {
+      providerRun.metadata.model = event.model;
+      continue;
+    }
+
+    yield* ensureRoleChunk();
 
     if (event.type === 'response.output_text.delta') {
       yield toSseData(
@@ -238,23 +325,14 @@ export async function* serializeChatCompletionStream(
     }
 
     usage = event.usage;
-
-    yield toSseData(
-      createChatCompletionStreamChunk(
-        providerRun.metadata,
-        {},
-        event.finishReason,
-      ),
-    );
+    finishReason = event.finishReason;
   }
 
-  if (!sentRoleChunk) {
-    yield toSseData(
-      createChatCompletionStreamChunk(providerRun.metadata, {
-        role: 'assistant',
-      }),
-    );
-  }
+  yield* ensureRoleChunk();
+
+  yield toSseData(
+    createChatCompletionStreamChunk(providerRun.metadata, {}, finishReason),
+  );
 
   yield toSseData(
     createChatCompletionUsageStreamChunk(providerRun.metadata, usage),

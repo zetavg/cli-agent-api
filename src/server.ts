@@ -9,6 +9,7 @@ import { chatCompletionsHandler } from './apis/chat-completions.js';
 import type { ApiHandler } from './apis/types.js';
 import { ClaudeProvider } from './providers/claude.js';
 import { CursorProvider } from './providers/cursor.js';
+import type { ToolMode } from './config.js';
 import {
   createRequestLogContext,
   durationMs,
@@ -22,6 +23,7 @@ export interface ServerOptions {
   apiKeys?: string[];
   providers?: AgentProvider[];
   apiHandlers?: ApiHandler[];
+  toolMode?: ToolMode;
 }
 
 export class HttpError extends Error {
@@ -44,6 +46,7 @@ export function createServer(options: ServerOptions = {}): Express {
   );
   const apiHandlers = options.apiHandlers ?? [chatCompletionsHandler];
   const apiKeys = new Set(options.apiKeys ?? []);
+  const toolMode: ToolMode = options.toolMode ?? 'native';
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -71,6 +74,7 @@ export function createServer(options: ServerOptions = {}): Express {
           response,
           provider,
           createRequestAbortSignal(request, response),
+          { toolMode },
         );
       } catch (error) {
         next(error);

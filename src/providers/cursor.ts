@@ -24,6 +24,13 @@ import type {
   ProviderChatCompletionRun,
   ProviderChatHistoryMessage,
 } from '../providers.js';
+import {
+  type BridgeConversionState,
+  buildToolSystemPromptSection,
+  convertBridgeParserEvents,
+  createBridgeConversionState,
+  createToolCallStreamParser,
+} from '../tool-bridge.js';
 
 interface CursorCliSystemLine {
   type: 'system';
@@ -153,11 +160,29 @@ export async function* streamCursorChatCompletion(
   const cwd = await ensureCursorWorkingDirectory();
   const normalizedHistory = normalizeCursorResumeHistory(input.history ?? []);
   const resumeSession = await prepareCursorResumeSession(input);
+  // Cursor has no flag to disable its built-in tools, so the prompted override
+  // is the only lever. Re-send it every turn (including resumes) so the model
+  // keeps using the bridge protocol instead of its own tools.
+  const bridge =
+    input.toolMode === 'bridge' &&
+    input.tools !== undefined &&
+    input.tools.length > 0;
+  const effectiveInput: ProviderChatCompletionInput = bridge
+    ? {
+        ...input,
+        systemPrompt: appendCursorBridgeSection(
+          input.systemPrompt,
+          input.tools ?? [],
+        ),
+      }
+    : input;
   const promptToSend = resumeSession
-    ? input.prompt
+    ? bridge
+      ? `${buildToolSystemPromptSection(input.tools ?? [], 'cursor')}\n\n${input.prompt}`
+      : input.prompt
     : normalizedHistory.length > 0
-      ? composeCursorColdStartPrompt(input, normalizedHistory)
-      : composeCursorFreshPrompt(input);
+      ? composeCursorColdStartPrompt(effectiveInput, normalizedHistory)
+      : composeCursorFreshPrompt(effectiveInput);
   const { command, baseArgs } = resolveCursorCommand();
   const subprocess = execa(
     command,
@@ -180,6 +205,9 @@ export async function* streamCursorChatCompletion(
     throw new Error('Failed to capture Cursor CLI stdout.');
   }
 
+  const parser = bridge ? createToolCallStreamParser() : undefined;
+  const bridgeState: BridgeConversionState = createBridgeConversionState();
+  let hardStopped = false;
   const stderrChunks: string[] = [];
   let sawTextDelta = false;
   let assistantText = '';
@@ -211,7 +239,42 @@ export async function* streamCursorChatCompletion(
 
       if (event.type === 'response.output_text.delta') {
         sawTextDelta = true;
-        assistantText += event.text;
+
+        if (parser) {
+          for (const converted of convertBridgeParserEvents(
+            parser.push(event.text),
+            bridgeState,
+          )) {
+            if (converted.type === 'response.output_text.delta') {
+              assistantText += converted.text;
+            }
+
+            yield converted;
+          }
+
+          if (bridgeState.stopRequested) {
+            // Stop the model at the tool-call boundary so it cannot fabricate
+            // the tool's result and subsequent steps.
+            hardStopped = true;
+            subprocess.kill();
+            break;
+          }
+        } else {
+          assistantText += event.text;
+          yield event;
+        }
+
+        continue;
+      }
+
+      if (
+        bridge &&
+        (event.type === 'response.output_tool_call.delta' ||
+          event.type === 'response.output_tool_result.delta')
+      ) {
+        // Cursor's built-in tools cannot be disabled; ignore its native tool
+        // events in bridge mode — only the client's bridged tools count.
+        continue;
       }
 
       yield event;
@@ -219,14 +282,40 @@ export async function* streamCursorChatCompletion(
 
     const result = await subprocess;
 
-    if (result.exitCode !== 0) {
+    if (!hardStopped && result.exitCode !== 0) {
       throw new Error(
         stderrChunks.join('').trim() ||
           `Cursor CLI exited with code ${result.exitCode}.`,
       );
     }
 
-    if (!sawTextDelta && fallbackText.trim().length > 0) {
+    if (parser) {
+      if (!hardStopped) {
+        if (!bridgeState.emitted && fallbackText.trim().length > 0) {
+          for (const converted of convertBridgeParserEvents(
+            parser.push(fallbackText),
+            bridgeState,
+          )) {
+            if (converted.type === 'response.output_text.delta') {
+              assistantText += converted.text;
+            }
+
+            yield converted;
+          }
+        }
+
+        for (const converted of convertBridgeParserEvents(
+          parser.flush(),
+          bridgeState,
+        )) {
+          if (converted.type === 'response.output_text.delta') {
+            assistantText += converted.text;
+          }
+
+          yield converted;
+        }
+      }
+    } else if (!sawTextDelta && fallbackText.trim().length > 0) {
       assistantText = fallbackText;
       yield {
         type: 'response.output_text.delta',
@@ -234,15 +323,17 @@ export async function* streamCursorChatCompletion(
       };
     }
 
-    await tryUpdateCursorSessionMapping(
-      resumeSession?.sessionId ?? capturedSessionId,
-      input,
-      assistantText,
-    );
+    if (!hardStopped) {
+      await tryUpdateCursorSessionMapping(
+        resumeSession?.sessionId ?? capturedSessionId,
+        input,
+        assistantText,
+      );
+    }
 
     yield {
       type: 'response.completed',
-      finishReason: 'stop',
+      finishReason: bridgeState.sawToolCall ? 'tool_calls' : 'stop',
       usage,
     };
   } catch (error) {
@@ -584,6 +675,15 @@ export function normalizeCursorUsage(
       rejected_prediction_tokens: 0,
     },
   };
+}
+
+function appendCursorBridgeSection(
+  systemPrompt: string | undefined,
+  tools: ProviderChatCompletionInput['tools'],
+): string {
+  const section = buildToolSystemPromptSection(tools ?? [], 'cursor');
+
+  return systemPrompt ? `${systemPrompt}\n\n${section}` : section;
 }
 
 function composeCursorFreshPrompt(input: ProviderChatCompletionInput): string {

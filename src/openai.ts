@@ -1,9 +1,31 @@
 import { randomUUID } from 'node:crypto';
 
+export interface ChatCompletionToolDefinition {
+  type?: string;
+  function: {
+    name: string;
+    description?: string;
+    parameters?: unknown;
+  };
+}
+
 export interface ChatCompletionsRequestBody {
   model?: string;
   stream?: boolean;
   messages?: unknown;
+  tools?: ChatCompletionToolDefinition[];
+  tool_choice?: unknown;
+}
+
+export type ChatCompletionFinishReason = 'stop' | 'length' | 'tool_calls';
+
+export interface ChatCompletionResponseToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
 }
 
 export interface ChatCompletionUsage {
@@ -92,7 +114,7 @@ export interface ProviderMetadataEvent {
 
 export interface ProviderCompletedEvent {
   type: 'response.completed';
-  finishReason: 'stop' | 'length';
+  finishReason: ChatCompletionFinishReason;
   usage?: ChatCompletionUsage;
 }
 
@@ -117,11 +139,14 @@ export function createCompletionMetadata(
 export function createChatCompletionResponse(
   metadata: ProviderCompletionMetadata,
   content: string,
-  finishReason: 'stop' | 'length',
+  finishReason: ChatCompletionFinishReason,
   usage?: ChatCompletionUsage,
   reasoningText?: string,
   reasoningDetails?: ChatCompletionReasoningDetail[],
+  toolCalls?: ChatCompletionResponseToolCall[],
 ) {
+  const hasToolCalls = toolCalls !== undefined && toolCalls.length > 0;
+
   return {
     id: metadata.id,
     object: 'chat.completion',
@@ -132,10 +157,11 @@ export function createChatCompletionResponse(
         index: 0,
         message: {
           role: 'assistant' as const,
-          content,
+          content: hasToolCalls && content.length === 0 ? null : content,
           reasoning: reasoningText,
           reasoning_content: reasoningText,
           reasoning_details: reasoningDetails,
+          tool_calls: hasToolCalls ? toolCalls : undefined,
         },
         finish_reason: finishReason,
       },
@@ -163,7 +189,7 @@ export function createChatCompletionStreamChunk(
     reasoning_content?: string;
     reasoning_details?: ChatCompletionReasoningDetail[];
   },
-  finishReason: 'stop' | 'length' | null = null,
+  finishReason: ChatCompletionFinishReason | null = null,
 ) {
   return {
     id: metadata.id,

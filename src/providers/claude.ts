@@ -24,6 +24,13 @@ import type {
   ProviderChatCompletionRun,
   ProviderChatHistoryMessage,
 } from '../providers.js';
+import {
+  type BridgeConversionState,
+  buildToolSystemPromptSection,
+  convertBridgeParserEvents,
+  createBridgeConversionState,
+  createToolCallStreamParser,
+} from '../tool-bridge.js';
 
 interface ClaudeCliResultLine {
   type: 'result';
@@ -151,6 +158,13 @@ export async function* streamClaudeChatCompletion(
     throw new Error('Failed to capture Claude CLI stdout.');
   }
 
+  const bridge =
+    input.toolMode === 'bridge' &&
+    input.tools !== undefined &&
+    input.tools.length > 0;
+  const parser = bridge ? createToolCallStreamParser() : undefined;
+  const bridgeState: BridgeConversionState = createBridgeConversionState();
+  let hardStopped = false;
   const stderrChunks: string[] = [];
   let sawTextDelta = false;
   let fallbackText = '';
@@ -232,18 +246,41 @@ export async function* streamClaudeChatCompletion(
         );
 
         if (toolCallDelta) {
-          yield toolCallDelta;
+          // In bridge mode built-in tools are disabled, so native tool_use
+          // blocks should not appear; ignore them defensively if they do.
+          if (!bridge) {
+            yield toolCallDelta;
+          }
+
           continue;
         }
 
         const deltaText = extractClaudeTextDelta(parsed);
 
         if (deltaText.length > 0) {
-          sawTextDelta = true;
-          yield {
-            type: 'response.output_text.delta',
-            text: deltaText,
-          };
+          if (parser) {
+            sawTextDelta = true;
+            yield* convertBridgeParserEvents(
+              parser.push(deltaText),
+              bridgeState,
+            );
+
+            if (bridgeState.stopRequested) {
+              // The model emitted a tool call and then kept going (it would
+              // otherwise fabricate the tool's result and later steps). Cut
+              // generation off at the tool-call boundary, like native
+              // function-calling does.
+              hardStopped = true;
+              subprocess.kill();
+              break;
+            }
+          } else {
+            sawTextDelta = true;
+            yield {
+              type: 'response.output_text.delta',
+              text: deltaText,
+            };
+          }
         }
 
         continue;
@@ -270,27 +307,40 @@ export async function* streamClaudeChatCompletion(
 
     const result = await subprocess;
 
-    if (result.exitCode !== 0) {
+    if (!hardStopped && result.exitCode !== 0) {
       throw new Error(
         stderrChunks.join('').trim() ||
           `Claude CLI exited with code ${result.exitCode}.`,
       );
     }
 
-    if (!sawTextDelta && fallbackText.trim().length > 0) {
+    if (parser) {
+      if (!hardStopped) {
+        // If no streamed text arrived, fall back to the consolidated result
+        // text, then flush any buffered tail through the parser.
+        if (!bridgeState.emitted && fallbackText.trim().length > 0) {
+          yield* convertBridgeParserEvents(
+            parser.push(fallbackText),
+            bridgeState,
+          );
+        }
+
+        yield* convertBridgeParserEvents(parser.flush(), bridgeState);
+      }
+    } else if (!sawTextDelta && fallbackText.trim().length > 0) {
       yield {
         type: 'response.output_text.delta',
         text: fallbackText,
       };
     }
 
-    if (resumeSession) {
+    if (resumeSession && !hardStopped) {
       await tryUpdateClaudeSessionMapping(resumeSession);
     }
 
     yield {
       type: 'response.completed',
-      finishReason,
+      finishReason: bridgeState.sawToolCall ? 'tool_calls' : finishReason,
       usage,
     };
   } catch (error) {
@@ -304,17 +354,30 @@ export function buildClaudeArgs(
   input: ProviderChatCompletionInput,
   resumeSessionId?: string,
 ): string[] {
+  const bridge =
+    input.toolMode === 'bridge' &&
+    input.tools !== undefined &&
+    input.tools.length > 0;
   const args = [
     '-p',
     '--output-format',
     'stream-json',
     '--include-partial-messages',
     '--verbose',
-    '--tools',
-    DEFAULT_CLAUDE_TOOLS.join(' '),
-    '--allowedTools',
-    DEFAULT_CLAUDE_TOOLS.join(' '),
   ];
+
+  if (bridge) {
+    // Disable all built-in tools so the model can only call the client's tools
+    // through the prompted bridge protocol.
+    args.push('--tools', '');
+  } else {
+    args.push(
+      '--tools',
+      DEFAULT_CLAUDE_TOOLS.join(' '),
+      '--allowedTools',
+      DEFAULT_CLAUDE_TOOLS.join(' '),
+    );
+  }
 
   if (input.model) {
     args.push('--model', input.model);
@@ -324,13 +387,29 @@ export function buildClaudeArgs(
     args.push('--resume', resumeSessionId);
   }
 
-  if (input.systemPrompt) {
-    args.push('--system-prompt', input.systemPrompt);
+  const systemPrompt = bridge
+    ? buildBridgeSystemPrompt(input)
+    : input.systemPrompt;
+
+  if (systemPrompt) {
+    args.push('--system-prompt', systemPrompt);
   }
 
   args.push(input.prompt);
 
   return args;
+}
+
+function buildBridgeSystemPrompt(
+  input: ProviderChatCompletionInput,
+): string | undefined {
+  if (!input.tools || input.tools.length === 0) {
+    return input.systemPrompt;
+  }
+
+  const section = buildToolSystemPromptSection(input.tools, 'claude');
+
+  return input.systemPrompt ? `${input.systemPrompt}\n\n${section}` : section;
 }
 
 export function resolveClaudeWorkingDirectory(

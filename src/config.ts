@@ -2,10 +2,13 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+export type ToolMode = 'native' | 'bridge';
+
 export interface ServeCliOptions {
   host?: string;
   port?: string | number;
   apiKey?: string;
+  toolMode?: string;
 }
 
 type AppEnv = Record<string, string | undefined>;
@@ -16,10 +19,12 @@ export interface ServeConfig {
   apiKeys: string[];
   dataDir: string;
   agentWorkspaceDir: string;
+  toolMode: ToolMode;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8041;
+const DEFAULT_TOOL_MODE: ToolMode = 'native';
 
 export function resolveServeConfig(
   options: ServeCliOptions,
@@ -37,7 +42,24 @@ export function resolveServeConfig(
     apiKeys: parseApiKeys(apiKeyInput),
     dataDir,
     agentWorkspaceDir: resolveAgentWorkspaceDir(env),
+    toolMode: parseToolMode(options.toolMode ?? env.TOOL_MODE),
   };
+}
+
+export function parseToolMode(value: string | undefined): ToolMode {
+  const normalized = value?.trim().toLowerCase();
+
+  if (normalized === undefined || normalized.length === 0) {
+    return DEFAULT_TOOL_MODE;
+  }
+
+  if (normalized !== 'native' && normalized !== 'bridge') {
+    throw new Error(
+      `Invalid tool mode: ${value}. Expected "native" or "bridge".`,
+    );
+  }
+
+  return normalized;
 }
 
 export function resolveXdgDataHome(env: AppEnv = process.env): string {

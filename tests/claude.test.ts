@@ -85,6 +85,38 @@ describe('Claude adapter helpers', () => {
     ]);
   });
 
+  test('disables built-in tools and injects the bridge prompt in bridge mode', () => {
+    const args = buildClaudeArgs({
+      prompt: 'Read the README.',
+      systemPrompt: 'You are an AI agent.',
+      toolMode: 'bridge',
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'read_file', description: 'Read a file' },
+        },
+      ],
+    });
+
+    // Built-in tools are disabled with an empty --tools value, and no
+    // --allowedTools entry is added.
+    const toolsIndex = args.indexOf('--tools');
+    expect(toolsIndex).toBeGreaterThanOrEqual(0);
+    expect(args[toolsIndex + 1]).toBe('');
+    expect(args).not.toContain('--allowedTools');
+
+    // The system prompt carries the original prompt plus the bridge protocol.
+    const systemPromptIndex = args.indexOf('--system-prompt');
+    expect(systemPromptIndex).toBeGreaterThanOrEqual(0);
+    const systemPrompt = args[systemPromptIndex + 1];
+    expect(systemPrompt).toContain('You are an AI agent.');
+    expect(systemPrompt).toContain('read_file');
+    expect(systemPrompt).toContain('<<<TOOL_CALL>>>');
+
+    // The prompt is still the final positional argument.
+    expect(args.at(-1)).toBe('Read the README.');
+  });
+
   test('parses stream-json lines and ignores invalid lines', () => {
     expect(
       parseClaudeLine(

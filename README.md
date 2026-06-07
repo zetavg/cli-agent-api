@@ -35,6 +35,7 @@ Options:
 - `--host` defaults to `127.0.0.1` or `HOST`
 - `--port` defaults to `8041` or `PORT`
 - `--api-key` reads comma-separated bearer tokens from the flag or `API_KEY`
+- `--tool-mode` is `native` (default) or `bridge`, falling back to `TOOL_MODE`
 
 Authentication is disabled when no API key is configured. When enabled, requests must send `Authorization: Bearer <token>`.
 
@@ -57,12 +58,46 @@ The permissive CORS policy is convenient for browser-based clients like Open Web
 
 ## Request behavior
 
-- The last message is used as the new Claude prompt
-- The last message must contain text content
+- The last message is used as the new turn:
+  - a `user` message becomes the new prompt (it must contain text content)
+  - one or more trailing `tool` messages are treated as the results of an in-progress tool call loop (see [Tool modes](#tool-modes)) instead of a prompt
 - `system` and `developer` messages are not written into Claude history; their text is concatenated and forwarded to Claude as `--system-prompt`
 - Earlier text `user` and `assistant` messages are serialized into a synthetic Claude session under `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`
 - When prior history exists, Claude is invoked with `--resume <session-id>` plus the new prompt
-- Non-text or unsupported history messages are ignored during session seeding
+- Non-text or unsupported history messages are ignored during session seeding (in `native` mode)
+
+## Tool modes
+
+CLI coding agents drive their own built-in tools: `claude -p` and `cursor-agent -p` run a tool inline and return a final answer. The OpenAI Chat Completions API is the opposite — it is **client-driven**: the server proposes a tool call, halts with `finish_reason: "tool_calls"`, the client executes the tool, posts the result back as a `role: "tool"` message, and the server resumes. The `--tool-mode` flag picks how the server reconciles the two:
+
+### `native` (default)
+
+The agent uses its own built-in tools. Any `tools` array in the request is ignored. This is best for chat-style UIs (for example Open WebUI) where you want the agent to act autonomously. Behavior is unchanged from earlier versions.
+
+### `bridge`
+
+When a request includes a non-empty `tools` array, the server exposes **the client's tools** to the agent instead of the agent's own, so editor coding agents (VS Code Copilot Chat, Cursor IDE, OpenAI agent SDKs) keep control of execution. A request with no `tools` still falls back to native behavior.
+
+Because the CLIs have no native hook for externally executed tools, the bridge teaches the model a sentinel-delimited protocol through the system prompt and parses it back into standard OpenAI `tool_calls`:
+
+- The tool definitions are injected into the system prompt with instructions to call them by emitting:
+
+  ```text
+  <<<TOOL_CALL>>>
+  {"id": "<id>", "name": "<tool name>", "arguments": { ... }}
+  <<<END_TOOL_CALL>>>
+  ```
+
+- The server parses those blocks out of the model's streamed text and re-emits them as OpenAI `delta.tool_calls` (and `message.tool_calls` for non-streaming), ending the response with `finish_reason: "tool_calls"`.
+- **The agent is stopped at the tool-call boundary.** A `claude -p` / `cursor-agent -p` process is a single-shot text generator with no built-in halt after a tool call, so left alone it tends to keep going and *fabricate* the tool's result (and the next steps) inline. To prevent that, the moment the parser sees a tool call followed by the model continuing with other text, the server kills the agent subprocess — mirroring how native function-calling halts token generation at the tool call. The client then executes the real tool and the loop continues on the next request.
+- On the follow-up request, the client's `role: "tool"` results are formatted back into `<<<TOOL_RESULT id="...">>> ... <<<END_TOOL_RESULT>>>` blocks and fed to the agent (via `--resume` plus the new turn), so the loop continues.
+
+Provider specifics in `bridge` mode:
+
+- **Claude** is started with `--tools ""`, which disables every built-in tool, so the model can only call the client's tools through the protocol.
+- **Cursor** has no flag to disable its built-in tools. The bridge relies on a stronger system-prompt override telling the model to ignore any previously provided tools and use only the bridged ones. This is best-effort — Cursor may still fall back to its own tools on some tasks. Prefer the `claude` provider for editor coding agents.
+
+Reasoning/"thinking" output is not specially surfaced in either mode yet; that is planned alongside a future `/v1/responses` endpoint (the Responses API has a native place for reasoning items).
 
 ## Claude behavior
 
