@@ -37,5 +37,25 @@ export {
   seedClaudeResumeSession,
   updateClaudeSessionMapping,
 } from './providers/claude.js';
+export {
+  buildCursorArgs,
+  CURSOR_REASONING_FORMAT,
+  CURSOR_SESSION_MAPPING_STORE_ID,
+  CURSOR_SESSION_MAPPING_STORE_VERSION,
+  CursorProvider,
+  createCursorSessionHistoryHash,
+  ensureCursorWorkingDirectory,
+  extractCursorToolName,
+  flattenCursorHistory,
+  normalizeCursorResumeHistory,
+  normalizeCursorUsage,
+  parseCursorLine,
+  prepareCursorResumeSession,
+  resolveCursorCommand,
+  resolveCursorWorkingDirectory,
+  streamCursorChatCompletion,
+  transformCursorLines,
+  updateCursorSessionMapping,
+} from './providers/cursor.js';
 export type { ServerOptions } from './server.js';
 export { createServer, HttpError } from './server.js';

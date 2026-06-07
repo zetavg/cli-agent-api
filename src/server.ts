@@ -8,6 +8,7 @@ import express, {
 import { chatCompletionsHandler } from './apis/chat-completions.js';
 import type { ApiHandler } from './apis/types.js';
 import { ClaudeProvider } from './providers/claude.js';
+import { CursorProvider } from './providers/cursor.js';
 import {
   createRequestLogContext,
   durationMs,
@@ -37,10 +38,9 @@ export class HttpError extends Error {
 export function createServer(options: ServerOptions = {}): Express {
   const app = express();
   const providers = new Map(
-    (options.providers ?? [new ClaudeProvider()]).map((provider) => [
-      provider.name,
-      provider,
-    ]),
+    (options.providers ?? [new ClaudeProvider(), new CursorProvider()]).map(
+      (provider) => [provider.name, provider],
+    ),
   );
   const apiHandlers = options.apiHandlers ?? [chatCompletionsHandler];
   const apiKeys = new Set(options.apiKeys ?? []);
