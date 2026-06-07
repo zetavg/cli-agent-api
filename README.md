@@ -4,16 +4,18 @@ Wrap CLI coding agents behind OpenAI-style APIs.
 
 ## MVP scope
 
-- Claude Code only
+- Claude Code and Cursor CLI
 - `POST /claude/v1/chat/completions`
+- `POST /cursor/v1/chat/completions`
 - Streaming and non-streaming responses
-- Generic route shape is `/:provider/<rest>`, but only `claude` + `/v1/chat/completions` is implemented today
+- Generic route shape is `/:provider/<rest>`; `claude` and `cursor` both implement `/v1/chat/completions` today
 
 ## Requirements
 
 - Node.js 22+
 - `pnpm`
-- `claude` available on `PATH`
+- `claude` available on `PATH` (for the `claude` provider)
+- `cursor-agent` or `cursor` available on `PATH` (for the `cursor` provider)
 
 Path defaults:
 
@@ -80,6 +82,25 @@ claude -p \
   --allowedTools "WebSearch WebFetch"
 ```
 
+## Cursor behavior
+
+The `cursor` provider wraps the Cursor CLI in print mode with stream-json output.
+
+Equivalent CLI flags:
+
+```bash
+cursor-agent -p \
+  --output-format stream-json \
+  --stream-partial-output \
+  --trust
+```
+
+- The CLI command is resolved by preferring `cursor-agent` on `PATH`, then falling back to `cursor agent`, then to known install locations (`/opt/homebrew/bin/cursor-agent`, `~/.local/bin/cursor-agent`, `~/.local/bin/cursor`). Both invocation styles share one argument builder.
+- The model is forwarded with `--model` when provided. Use a slug from `cursor-agent --list-models` (for example `gpt-5`, `sonnet-4`, `composer-2.5`); when omitted, Cursor uses the account default.
+- Cursor has no `--system-prompt` flag, so `system` and `developer` message text is prepended to the prompt for fresh sessions.
+- Cursor stores chat history in an opaque database that cannot be seeded. Multi-turn continuity is handled by mapping a hash of the conversation history to the Cursor session id and resuming it with `--resume`. On a cache miss with prior history (cold start), the history is flattened into the prompt instead.
+- Tool permissions: `--trust` is always passed for the managed workspace. In headless print mode, read-only tools run automatically and write/shell tools are rejected unless approved. Set `CURSOR_FORCE=1` to add `--force` (Run Everything); note that organization policy may disable this.
+
 ## Request example
 
 ```bash
@@ -100,6 +121,30 @@ This becomes roughly:
 
 ```bash
 claude ... --system-prompt "You are an AI agent." "Hello there!"
+```
+
+The same request against the `cursor` provider:
+
+```bash
+curl http://127.0.0.1:8041/cursor/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alpha' \
+  -d '{
+    "model": "gpt-5",
+    "stream": true,
+    "messages": [
+      { "role": "developer", "content": [{ "type": "text", "text": "You are an AI agent." }] },
+      { "role": "user", "content": [{ "type": "text", "text": "Hello there!" }] }
+    ]
+  }'
+```
+
+This becomes roughly:
+
+```bash
+cursor-agent -p ... --model "gpt-5" "You are an AI agent.
+
+Hello there!"
 ```
 
 ## Response behavior
@@ -139,7 +184,7 @@ These fields are useful for compatible clients, but generic OpenAI-compatible UI
 - Provider-specific process management lives under `src/providers/`
 - API surface handlers live under `src/apis/`
 - The server is wired through handler/provider registries so adding `/v1/responses` or new providers should not require rewriting the core server
-- Current exported provider support is Claude only
+- Exported providers are Claude and Cursor
 
 ## Development
 
